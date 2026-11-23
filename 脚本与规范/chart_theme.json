@@ -1,0 +1,51 @@
+{
+  "_comment": "国金证券研究所标准图表配色与样式配置（严格遵循质控部要求：仅使用黑、蓝、灰色系，禁用红/桔/绿色）",
+  "font": {
+    "family_priority": [
+      "Microsoft YaHei",
+      "SimHei",
+      "Source Han Sans CN",
+      "PingFang SC",
+      "DejaVu Sans"
+    ],
+    "title_size": 10.5,
+    "axis_label_size": 9.0,
+    "tick_size": 8.5,
+    "legend_size": 8.5,
+    "data_label_size": 8.0,
+    "text_color": "#262626",
+    "muted_text_color": "#595959"
+  },
+  "colors": {
+    "primary": "#004870",
+    "series": [
+      "#004870",
+      "#285884",
+      "#5B9BD5",
+      "#8CC0C8",
+      "#8C8C8C",
+      "#BFBFBF",
+      "#333333",
+      "#D0E4F0"
+    ],
+    "line_secondary": "#333333",
+    "line_tertiary": "#7F7F7F",
+    "grid": "#E4E4E4",
+    "spine": "#BFBFBF",
+    "background": "#FFFFFF"
+  },
+  "layout": {
+    "dpi": 300,
+    "single_figsize": [6.8, 3.6],
+    "double_figsize": [4.6, 3.2],
+    "bar_width": 0.52,
+    "line_width": 2.0,
+    "marker_size": 4.5,
+    "show_grid": false,
+    "grid_linestyle": "--",
+    "grid_linewidth": 0.6,
+    "show_top_spine": false,
+    "show_right_spine": false,
+    "legend_loc": "upper center"
+  }
+}

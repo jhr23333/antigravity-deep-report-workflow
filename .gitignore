@@ -1,0 +1,22 @@
+# Keep company projects, templates, and references local.
+/*/
+!/.agents/
+!/脚本与规范/
+
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+credentials.json
+*.key
+*.pem
+*.pfx
+*.pdf
+*.docx
+*.xlsx
+*.xls
+*.pptx
+*.png
+*.jpg
+*.zip
