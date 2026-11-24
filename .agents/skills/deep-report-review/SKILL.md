@@ -49,4 +49,4 @@ D:\anaconda3\python.exe D:\深度报告\脚本与规范\redteam_review.py `
 - 若 `verdict` 为 `REJECT` 或 `CONDITIONAL_PASS`：按审稿意见定点修订 `05_完整初稿.md`、`report_meta.json`、`charts.json` 与 `06_证据清单.json`（保留未被指出的原有段落，不做无故全文重写）。
 - **草稿期 vs 发版期复审策略**：
   - 修订过程中微调措辞不强制立刻重跑 Opus（`sync_check.py --strict` 仅打印 🟡 提醒版本哈希已变更）；
-  - **正式发版前**必须重新跑一次 Step 1 + Step 2，让 Opus 对最终定稿版本签发 `verdict: PASS`（或已全部闭环的 `CONDITIONAL_PASS`）并匹配最新 `draft_sha256`，随后 `sync_check.py --release` 方可放行。
+  - **终稿复审签认**：如需通过 `--release` 终验，重新跑一次 Step 1 + Step 2，让审稿模型（Opus / Sonnet / Gemini / ChatGPT）对最终定稿版本签发 `verdict: PASS`（或已全部闭环的 `CONDITIONAL_PASS`）并匹配最新 `draft_sha256`。

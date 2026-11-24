@@ -16,7 +16,7 @@
 1. **数据源分工**：常规历史财务与行情优先走同花顺 iFinD（底稿享受数据库免截图豁免）；仅对非标业务明细（产能/实名客户/财务费用拆解）及底稿原页红框截图，后台按需自动拉取 2–3 份核心公开 PDF。
 2. **模型分工**：Step 3.5 红队审稿首选 **Antigravity 内置 Claude Opus 5.5**（`claude-opus-5-5-medium` / `high`），配额紧张时可无缝切换内置 `Claude Sonnet 5.5 (High)` / 零历史 `Gemini 4 (High)`，或把任务包交外部 ChatGPT 复审并回填至 `05_红队审稿意见.md`（带 `REVIEW_META`），严禁调用外部 Claude Code CLI；默认直接扫正文 + `search_web` 核查，仅遇异常数字或分歧时定点查阅 PDF 对应页。
 3. **卖方文风与质控**：整体采用建设性/偏乐观卖方框架，不堆砌过多风险段落；严禁引用友商卖方研报（高盛/大摩/中信/中金/华泰等）及非白名单论坛/自媒体；首页摘要正文 `≤ 850 字` 且不出现可比公司名；未填模型的第四章数字一律保留 `[待模型填入]`，严禁杜撰 EPS/目标价/评级。
-4. **双门禁制度**：
-   - **草稿态（`--strict`）**：拦死真实错误（黑名单、无红框/假覆盖、年份互换、表格错位、XML 缺陷），允许未填 `[待模型填入]` 与暂缺付费报告截图（打印 `[DRAFT-PASS]` / `[INCOMPLETE]`）。
-   - **正式发版（`--release`）**：零容忍——`sync_check.py --release`、`verify_docx.py --release`、`build_workpaper.py --release` 三者必须全部 `exit code = 0`（0 占位符、0 待补截图、0 裸根域名、Opus 终稿 `draft_sha256` 签认匹配）。
+4. **双门禁制度（与“AI 留 `[待模型填入]`、研究员自刷模型”对齐）**：
+   - **AI 默认交付门禁（`--strict`）**：拦死一切真实错误（黑名单、无红框/假覆盖、年份互换、表格错位、XML 缺陷），每次对账落盘 `09_对账与质检报告.md`，允许保留 `[待模型填入]` 供研究员拿到 Word 后自行刷模型（暂缺付费报告截图时打印 `[INCOMPLETE]` 标黄）。
+   - **可选终验门禁（`--release`）**：仅在研究员将模型数字回填进 Markdown 且补齐全部付费报告截图、需要机器做零占位终验时执行——校验 0 占位符、0 待补截图、0 裸根域名、以及审稿报告（兼容 Opus / Sonnet / Gemini / ChatGPT）的 `draft_sha256` 与终稿一致。
 5. **所有规范单一真源（SSOT）**：文风改 `脚本与规范/style_guide.md`，配色改 `脚本与规范/chart_theme.json`，Word 模板规则改 `脚本与规范/report_template_spec.md`，底稿门禁改 `脚本与规范/workpaper_spec.md`，SOP 改 `脚本与规范/workflow_sop.md`。
