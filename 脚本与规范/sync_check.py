@@ -64,6 +64,102 @@ def compute_draft_sha256(md_text: str, meta_text: str) -> str:
     return h.hexdigest()[:16]
 
 
+def parse_md_chart_titles(md_text: str) -> List[Tuple[str, str]]:
+    """提取正文中每个 CHART / CHART_PAIR 注释块对应的 (图片文件名, 图表标题)，供年份区间一致性核查。"""
+    pairs: List[Tuple[str, str]] = []
+    # 解析单图 CHART 块
+    for blk in re.finditer(r"<!--\s*CHART\b(.*?)-->", md_text, flags=re.S):
+        body = blk.group(1)
+        m_img = re.search(r"^\s*image\s*:\s*(.+)$", body, flags=re.M)
+        m_tit = re.search(r"^\s*title\s*:\s*(.+)$", body, flags=re.M)
+        if m_img and m_tit:
+            pairs.append((os.path.basename(m_img.group(1).strip()), m_tit.group(1).strip()))
+    # 解析双图 CHART_PAIR 块
+    for blk in re.finditer(r"<!--\s*CHART_PAIR\b(.*?)-->", md_text, flags=re.S):
+        body = blk.group(1)
+        for side in ("left", "right"):
+            m_img = re.search(rf"^\s*{side}_image\s*:\s*(.+)$", body, flags=re.M)
+            m_tit = re.search(rf"^\s*{side}_title\s*:\s*(.+)$", body, flags=re.M)
+            if m_img and m_tit:
+                pairs.append((os.path.basename(m_img.group(1).strip()), m_tit.group(1).strip()))
+    return pairs
+
+
+def audit_chart_title_year_range(
+    chart_title_pairs: List[Tuple[str, str]],
+    cfg_by_file: Dict[str, Dict[str, Any]],
+) -> List[str]:
+    """
+    核查正文图表标题中标注的起止年份区间（如“2023-2026E”“2021至2026Q3”）
+    是否与 charts.json 对应图表的实际横轴年份范围严格一致；不一致直接亮 🔴 阻断。
+    """
+    errs: List[str] = []
+    # 匹配标题中的起止年份区间：支持 2023-2026E、2021–2026Q3、2022至2025年、FY2024-FY2026E
+    range_re = re.compile(r"(?:FY)?(20\d{2})(?:Q[1-4]|H[12]|E)?\s*(?:[-–—~]|至)\s*(?:FY)?(20\d{2})(?:Q[1-4]|H[12]|E)?")
+
+    for fn, title in chart_title_pairs:
+        cfg = cfg_by_file.get(fn)
+        if not cfg:
+            continue
+        cats = cfg.get("categories") or []
+        if len(cats) < 2:
+            continue
+        m = range_re.search(title)
+        if not m:
+            continue
+        title_start, title_end = int(m.group(1)), int(m.group(2))
+        # 从 categories 中抽取全部横轴年份（兼容 "2024", "2026Q1-Q3", "25Q1", "FY2025"）
+        axis_years: List[int] = []
+        for c in cats:
+            cs = str(c)
+            m4 = re.search(r"(20\d{2})", cs)
+            if m4:
+                axis_years.append(int(m4.group(1)))
+            else:
+                m2 = re.match(r"^(\d{2})[QH]", cs)
+                if m2:
+                    axis_years.append(2000 + int(m2.group(1)))
+        # 仅当横轴确实是年份/季度时间序列（至少包含 2 个有效年份标签）时执行比对
+        if len(axis_years) < 2:
+            continue
+        min_y, max_y = min(axis_years), max(axis_years)
+        if min_y != title_start or max_y != title_end:
+            errs.append(
+                f"🔴 [图表标题年份与横轴不符] {fn}：标题写「{title_start}–{title_end}」（{title}），"
+                f"但 charts.json 实际横轴年份范围为 {min_y}–{max_y}（categories={cats}）！"
+            )
+    return errs
+
+
+def audit_style_guardrails(md_text: str) -> List[str]:
+    """
+    依据 2026-11-24 沉淀的永久写作红线做轻量提示扫描：
+    1. 禁止分析财务费用率（命中“财务费用率”即输出 🟡 提醒，附行号）；
+    2. 避免单段正文连续堆砌一连串逐年/逐季数字清单（单段独立带单位数值/百分数 ≥ 9 处时输出 🟡 提醒）。
+    """
+    warns: List[str] = []
+    num_unit_re = re.compile(r"\d+(?:\.\d+)?(?:%|pct|个百分点|亿元|万元|亿美元|百万美元|亿日元|万股)")
+    in_comment = False
+    for idx, raw_line in enumerate(md_text.splitlines(), 1):
+        s = raw_line.strip()
+        if s.startswith("<!--"):
+            in_comment = True
+        if in_comment:
+            if "-->" in s:
+                in_comment = False
+            continue
+        if not s or s.startswith("#") or s.startswith("|") or s.startswith(">"):
+            continue
+        if "财务费用率" in s:
+            warns.append(f"🟡 [文风红线·财务费用率] 正文第 {idx} 行提及「财务费用率」（请按规范删除财务费用率分析）")
+        hits = num_unit_re.findall(s)
+        if len(hits) >= 9:
+            warns.append(
+                f"🟡 [文风红线·疑似连续堆砌数字] 正文第 {idx} 行单段出现 {len(hits)} 个带单位数值，建议精简流水账让图表说话"
+            )
+    return warns
+
+
 def parse_md_charts_and_tables(md_text: str) -> Tuple[List[str], List[Tuple[str, List[List[str]]]]]:
     """解析 05_完整初稿.md 中的全部图片文件名，以及每张 TABLE_META 对应的 Markdown 表格矩阵。"""
     img_refs: List[str] = []
@@ -569,12 +665,17 @@ def run_sync_check(
     if missing_in_manifest:
         reds.append(f"🔴 [正文vs底稿缺图] 正文引用但 06_证据清单.json 漏登的图表：{sorted(missing_in_manifest)}")
 
-    # 4. 【期间 × 数值】有序对账（charts.json ↔ 底稿 raw_data）
+    # 4. 【期间 × 数值】有序对账（charts.json ↔ 底稿 raw_data）+ 图表标题年份与横轴一致性校验
     chart_drift_errs: List[str] = []
     for fn, cfg in cfg_by_file.items():
         if fn in manifest_charts:
             chart_drift_errs.extend(audit_chart_ordered_values(fn, cfg, manifest_charts[fn]))
+    title_year_errs = audit_chart_title_year_range(parse_md_chart_titles(md_text), cfg_by_file)
     reds.extend(chart_drift_errs)
+    reds.extend(title_year_errs)
+
+    # 4.5 永久写作红线轻量扫描（不分析财务费用率 + 防止正文连续堆砌数字）
+    yellows.extend(audit_style_guardrails(md_text))
 
     # 5. 正文 Markdown 表格 ↔ 底稿 table 逐行数值对账
     table_drift_errs = audit_md_tables_vs_manifest(md_tables, manifest_tables)

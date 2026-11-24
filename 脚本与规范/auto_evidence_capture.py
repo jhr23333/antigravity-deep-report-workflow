@@ -532,7 +532,16 @@ def capture_web_with_dom_redbox(
             {"width": viewport[0], "height": viewport[1], "deviceScaleFactor": 1, "mobile": False},
         )
         cdp.call("Page.navigate", {"url": url})
-        time.sleep(wait_sec)
+        # 轮询等待文档加载完成（兼顾海外慢站与国内 React/Vue SPA 渲染），再额外静默等待动态内容挂载
+        for _ in range(16):
+            time.sleep(0.5)
+            try:
+                rs = cdp.call("Runtime.evaluate", {"expression": "document.readyState", "returnByValue": True})
+                if rs.get("result", {}).get("value") == "complete":
+                    break
+            except Exception:
+                break
+        time.sleep(max(1.5, min(wait_sec, 4.0)))
 
         # 获取最终真实 URL 与页面文本，并执行 DOM 精准红框与滚动
         js_tokens = json.dumps(must_contain, ensure_ascii=False)
@@ -552,20 +561,31 @@ def capture_web_with_dom_redbox(
                 if (el.offsetHeight < 260) el.style.display = 'none';
             }});
 
-            // 查找包含任意核心数字的最紧致块级元素（p / tr / li / h1-h3 / div）并画红框
-            const candidates = Array.from(document.querySelectorAll('p, tr, li, h1, h2, h3, article div'));
-            const matched = [];
-            for (const el of candidates) {{
-                const txt = (el.innerText || '').replace(/\\s+/g, '');
-                if (!txt || txt.length > 650) continue;
-                const hit = tokens.some(t => txt.includes(t.replace(/\\s+/g, '')));
-                if (hit) {{
-                    const hasMatchedChild = Array.from(el.querySelectorAll('p, tr, li')).some(ch => {{
-                        const ct = (ch.innerText || '').replace(/\\s+/g, '');
-                        return ct && ct.length <= 650 && tokens.some(t => ct.includes(t.replace(/\\s+/g, '')));
-                    }});
-                    if (!hasMatchedChild) matched.push(el);
+            // 通用最紧致 DOM 红框匹配器：先查标准语义块，未命中时自动回退至通用 div/span/td（适配财联社等现代前端站点）
+            const collectMatched = (selector, childSelector) => {{
+                const res = [];
+                const nodes = Array.from(document.querySelectorAll(selector));
+                for (const el of nodes) {{
+                    const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+                    if (!rect || rect.width < 20 || rect.height < 10) continue;
+                    const txt = (el.innerText || '').replace(/\\s+/g, '');
+                    if (!txt || txt.length > 650) continue;
+                    const hit = tokens.some(t => txt.includes(t.replace(/\\s+/g, '')));
+                    if (hit) {{
+                        const hasMatchedChild = Array.from(el.querySelectorAll(childSelector)).some(ch => {{
+                            const ct = (ch.innerText || '').replace(/\\s+/g, '');
+                            return ct && ct.length <= 650 && tokens.some(t => ct.includes(t.replace(/\\s+/g, '')));
+                        }});
+                        if (!hasMatchedChild) res.push(el);
+                    }}
                 }}
+                return res;
+            }};
+
+            let matched = collectMatched('p, tr, li, h1, h2, h3, article div, section p', 'p, tr, li');
+            if (matched.length === 0) {{
+                // 回退扫描普通 div/span/td/dd/blockquote 叶子正文容器（解决正文直接包在普通 div 内的站点）
+                matched = collectMatched('div, span, td, dd, blockquote', 'div, p, tr, li, span, td');
             }}
 
             if (matched.length > 0) {{
@@ -813,12 +833,19 @@ def run_manifest_capture(
                     url = sp.get("url", "").strip()
                     must_contain = list(sp.get("must_contain") or [])
                     banner = sp.get("banner") or item_label[:40]
-                    ok, final_url, msg = capture_web_with_dom_redbox(
-                        url=url,
-                        must_contain=must_contain,
-                        out_png=out_png,
-                        banner_prefix=banner,
-                    )
+                    # 对偶发 CDP 断连/超时自动重试一次，降低网络抖动导致的误失败
+                    ok, final_url, msg = False, url, ""
+                    for attempt in range(2):
+                        ok, final_url, msg = capture_web_with_dom_redbox(
+                            url=url,
+                            must_contain=must_contain,
+                            out_png=out_png,
+                            banner_prefix=banner,
+                        )
+                        if ok or ("未命中必需数字" in msg and attempt == 0 and "timed out" not in msg.lower()):
+                            # 若非网络瞬断（已完整加载但页面确无目标数字），无需盲目重试
+                            break
+                        time.sleep(1.0)
                     if ok:
                         ok_cnt += 1
                         print(f"  [OK-WEB] {item_label[:26]} -> {os.path.basename(out_png)}")
@@ -826,6 +853,13 @@ def run_manifest_capture(
                     else:
                         fail_cnt += 1
                         print(f"  [FAIL-WEB] {item_label[:26]} -> {msg}")
+                        # 机器自动记录真实抓取尝试与失败原因，供 build_workpaper.py 门禁 2B 区分“未抓先弃”与“已尝试但受限”
+                        if write_back:
+                            attempts = item.setdefault("attempted_urls", [])
+                            rec = {"url": url, "reason": msg}
+                            if rec not in attempts:
+                                attempts.append(rec)
+                                modified = True
                 else:
                     fail_cnt += 1
                     print(f"  [FAIL] {item_label[:26]} -> 未知 capture_spec.type='{ctype}'")

@@ -367,6 +367,15 @@ def audit_manifest(manifest: Dict[str, Any], base_dir: str) -> Dict[str, Any]:
             if not valid_shots:
                 stats["missing_shot_items"] += 1
                 missing_shots.append(f"  - [{sname}] {label} | 需补截图来源：{src_name or '未填写'}")
+                # 门禁 2B（防未抓先弃）：非数据库豁免条目若缺图且既未配置 capture_spec/capture_specs，
+                # 又无真实机器尝试失败留痕（attempted_urls），说明未执行联网/PDF 取证就直接留空，--strict 直接阻断！
+                has_spec = bool(item.get("capture_spec") or item.get("capture_specs"))
+                has_attempt = bool(item.get("attempted_urls"))
+                if not has_spec and not has_attempt:
+                    red_errors.append(
+                        f"🔴 [门禁2B·未尝试联网或PDF取证即留空] Sheet「{sname}」{label} -> "
+                        f"既未配置 capture_spec/capture_specs 也无 attempted_urls 抓取留痕，严禁跳过联网官网/白名单转引直接写 missing_reason！"
+                    )
                 if _is_bare_homepage_url(src_url):
                     yellow_warnings.append(
                         f"🟡 [门禁5·缺图条目且网址仅为根域名] Sheet「{sname}」{label} -> {src_url}"

@@ -35,12 +35,16 @@ STATEMENT_ITEMS: Dict[str, List[Tuple[str, List[str], bool]]] = {
         ("研发费用", [r"^研发费用$"], True),
         ("财务费用", [r"^财务费用$"], True),
         ("其中：利息费用", [r"^其中：利息费用$"], False),
+        ("所得税费用", [r"^(?:减：)?所得税费用$"], False),
         ("归母净利润", [r"归属于母公司股东的净利润"], True),
+        ("少数股东损益", [r"少数股东损益"], False),
     ],
     "合并资产负债表": [
         ("货币资金", [r"^货币资金$"], True),
+        ("交易性金融资产", [r"^交易性金融资产$"], False),
         ("应收账款", [r"^应收账款$"], True),
         ("存货", [r"^存货$"], True),
+        ("合同负债", [r"^合同负债$"], False),
         ("固定资产", [r"^固定资产$"], True),
         ("在建工程", [r"^在建工程$"], True),
         ("短期借款", [r"^短期借款$"], False),
@@ -164,7 +168,7 @@ def _build_logical_rows(page_lines_with_pno: List[Tuple[str, int]]) -> List[Tupl
                 ))
                 or ln.startswith((
                     "润", "利润", "净额", "额", "合计", "填列）", "列）", "的现金",
-                    "资产支付", "收益", "“-", '"-', "号填列", "）", ")",
+                    "资产支付", "收益", "“-", '"-', "号填列", "）", ")", "（", "(",
                 ))
                 or (joined_prev.count("（") > joined_prev.count("）"))
                 or (joined_prev.count("(") > joined_prev.count(")"))
@@ -270,7 +274,7 @@ def generate_snapshot_markdown(
         f"# {company_name}（{stock_code}）最新一期合并报表核心科目核对快照",
         "",
         f"> 生成时间：{now}｜一手 PDF 来源：`{os.path.basename(pdf_path)}`（严格按合并三大表分节列解析，跳过首页同比列）",
-        "> **用途**：常规财务可优先走 iFinD，本表用于核查四费/财务费用/资产负债表/现金流附注明细并喂给 Step 3.5 Opus 审稿。",
+        "> **用途**：常规财务可优先走 iFinD，本表用于核查三费（销售/管理/研发）/广义现金/所得税与少数股东损益/现金流明细并喂给 Step 3.5 红队审稿。",
         "",
     ]
 
@@ -317,7 +321,8 @@ def generate_snapshot_markdown(
             s += f"（上年同期 `{gm2:.2f}%`，同比 `{gm1 - gm2:+.2f}pct`）"
         lines.append(s)
 
-    for exp_name in ("销售费用", "管理费用", "研发费用", "财务费用"):
+    # 依据文风永久红线：仅输出销售/管理/研发三费率，不自动计算输出“财务费用率”以免诱导正文展开分析
+    for exp_name in ("销售费用", "管理费用", "研发费用"):
         e1, e2, _ = extracted.get(exp_name, (None, None, 0))
         if rev1 and e1 is not None:
             r1 = e1 / rev1 * 100.0
@@ -326,6 +331,17 @@ def generate_snapshot_markdown(
                 r2 = e2 / rev2 * 100.0
                 s += f"（上年同期 `{r2:.2f}%`，同比 `{r1 - r2:+.2f}pct`）"
             lines.append(s)
+
+    # 自动计算期末广义现金储备（货币资金 + 交易性金融资产），防止遗漏大额理财资金
+    cash1, cash2, _ = extracted.get("货币资金", (None, None, 0))
+    fin1, fin2, _ = extracted.get("交易性金融资产", (None, None, 0))
+    if cash1 is not None and fin1 is not None:
+        broad1 = cash1 + fin1
+        s = f"- **期末广义现金储备（货币资金+交易性金融资产）**：`{fmt_yi(broad1)} 亿元`（货币资金 `{fmt_yi(cash1)}` 亿 + 交易性金融资产 `{fmt_yi(fin1)}` 亿）"
+        if cash2 is not None and fin2 is not None:
+            broad2 = cash2 + fin2
+            s += f"，较期初 `{fmt_yi(broad2)} 亿元` 变动 `{(broad1 - broad2) / 1e8:+.2f} 亿元`"
+        lines.append(s)
 
     assets1, assets2, _ = extracted.get("资产总计", (None, None, 0))
     liab1, liab2, _ = extracted.get("负债合计", (None, None, 0))
