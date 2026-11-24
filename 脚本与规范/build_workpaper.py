@@ -24,9 +24,9 @@
    - 默认以宽上限 1400px、JPEG 质量 90 高清嵌入，确保红框、小字与页码清晰可辨。
 
 命令行用法：
-    python build_workpaper.py --manifest 06_证据清单.json --out 公司名_工作底稿.xlsx
-    python build_workpaper.py --manifest 06_证据清单.json --out 公司名_工作底稿.xlsx --strict
-    python build_workpaper.py --manifest 06_证据清单.json --audit-only
+    D:\\anaconda3\\python.exe build_workpaper.py --manifest 06_证据清单.json --out 公司名_工作底稿.xlsx
+    D:\\anaconda3\\python.exe build_workpaper.py --manifest 06_证据清单.json --out 公司名_工作底稿.xlsx --strict
+    D:\\anaconda3\\python.exe build_workpaper.py --manifest 06_证据清单.json --audit-only
 """
 
 import argparse
@@ -255,9 +255,9 @@ def _split_distinct_sources(source_name: str) -> List[str]:
     """
     if not source_name:
         return []
-    # 去除括号内日期/说明，避免括号内标点误拆分
+    # 去除括号内日期/说明，仅按顿号/分号/斜杠拆分（不按“及”拆分，避免误拆“工信部及发改委联合通知”）
     cleaned = re.sub(r"[（(][^）)]*[）)]", "", source_name)
-    parts = re.split(r"[、;；/]|及", cleaned)
+    parts = re.split(r"[、;；/]", cleaned)
     ignore_kws = ("国金证券", "研究所", "ifind", "wind", "万得", "同花顺", "choice")
     sources: List[str] = []
     for p in parts:
@@ -378,8 +378,11 @@ def audit_manifest(manifest: Dict[str, Any], base_dir: str) -> Dict[str, Any]:
             else:
                 stats["single_shot_items"] += 1
 
-            # ---- 门禁 3：多公司 / 多文档 / 复合图数量门禁（核心防遗漏！） ----
-            single_ok = bool(item.get("single_source_covers_all", False))
+            # ---- 门禁 3：多公司 / 多文档 / 复合图数量门禁（核心防遗漏，支持显式单源豁免） ----
+            single_ok = bool(
+                item.get("single_source_covers_all", False)
+                or item.get("single_source_verified", False)
+            )
             peer_cnt = _detect_peer_company_count(raw_data, src_name)
             if peer_cnt >= 3 and len(valid_shots) < peer_cnt and not single_ok:
                 red_errors.append(
@@ -753,11 +756,7 @@ def print_audit_report(report: Dict[str, Any]) -> None:
 
 def main() -> None:
     """命令行入口：执行六道质控门禁校验，并生成高清正式工作底稿 Excel。"""
-    default_tpl = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "模板资产",
-        "国金研报工作底稿模板.xlsx",
-    )
+    default_tpl = r"D:\深度报告\模板资产\国金研报工作底稿模板.xlsx"
     parser = argparse.ArgumentParser(description="国金证券合规工作底稿 Excel 自动生成与六道质控门禁脚本")
     parser.add_argument("--manifest", required=True, help="06_证据清单.json 文件路径")
     parser.add_argument("--out", default="", help="输出工作底稿 (.xlsx) 路径（--audit-only 时可不传）")

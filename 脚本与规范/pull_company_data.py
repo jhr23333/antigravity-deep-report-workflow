@@ -8,10 +8,10 @@
   彻底杜绝“把同比增速误当上期金额”“跨行折行漏读归母净利润/经营现金流”“缺关键科目仍静默返回 0”三大隐患。
 
 命令行用法：
-    python .\\脚本与规范\\pull_company_data.py `
-      --name 示例公司 --code 600000.SH `
-      --pdf .\\示例公司\\00_原始资料\\pdfs\\最新季报.pdf `
-      --out .\\示例公司\\00_原始资料\\01_最新财报全科目快照.md
+    D:\\anaconda3\\python.exe D:\\深度报告\\脚本与规范\\pull_company_data.py `
+      --name 超颖电子 --code 603175.SH `
+      --pdf D:\\深度报告\\超颖电子\\00_原始资料\\pdfs\\超颖电子_20261031_2026三季报.pdf `
+      --out D:\\深度报告\\超颖电子\\00_原始资料\\01_最新财报全科目快照.md
 """
 
 import argparse
@@ -343,8 +343,8 @@ def generate_snapshot_markdown(
 def main() -> None:
     """命令行入口：按合并报表分节提取核心科目；缺必抽科目时显式非零报错。"""
     parser = argparse.ArgumentParser(description="国金深度报告 Step 1 合并报表核心科目快照提取脚本")
-    parser.add_argument("--name", required=True, help="公司简称（如 示例公司）")
-    parser.add_argument("--code", required=True, help="股票代码（如 600000.SH）")
+    parser.add_argument("--name", required=True, help="公司简称（如 超颖电子）")
+    parser.add_argument("--code", required=True, help="股票代码（如 603175.SH）")
     parser.add_argument("--pdf", required=True, help="最新一期季报或年报 PDF 路径")
     parser.add_argument("--out", required=True, help="输出快照 Markdown 路径")
     parser.add_argument("--date", default="", help="可选：拉取 iFinD 收盘行情的交易日 YYYY-MM-DD")

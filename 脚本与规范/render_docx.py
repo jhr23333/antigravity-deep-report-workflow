@@ -17,7 +17,7 @@
 3. 内置质控部红线自动体检：检查主标题是否 >20 字、全文是否含禁用极端词或禁用排版格式。
 
 命令行用法：
-    python render_docx.py --md 05_完整初稿.md --meta report_meta.json --out 公司名_深度报告.docx
+    D:\\anaconda3\\python.exe render_docx.py --md 05_完整初稿.md --meta report_meta.json --out 公司名_深度报告.docx
 """
 
 import argparse
@@ -568,15 +568,20 @@ def render_report(
 
             for r in range(3):
                 set_cell_width_dxa(tbl.cell(r, 0), col_w_dxa)
+                # 禁止单图容器任意行被跨页腰斩
+                trPr = tbl.rows[r]._tr.get_or_add_trPr()
+                trPr.append(parse_xml(f"<w:cantSplit {nsdecls('w')}/>"))
 
-            # 第 1 行：图表标题（完整保留 ContentGraphTitle 原生楷体五号加粗斜体）
+            # 第 1 行：图表标题（保留 ContentGraphTitle 原生样式，并加 keep_with_next 防图题与图分离）
             p_title = tbl.cell(0, 0).paragraphs[0]
             p_title.style = get_style("ContentGraphTitle")
+            p_title.paragraph_format.keep_with_next = True
             p_title.add_run(title_txt)
 
-            # 第 2 行：图表图片
+            # 第 2 行：图表图片（加 keep_with_next 防图片与来源行分离）
             p_img = tbl.cell(1, 0).paragraphs[0]
             p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p_img.paragraph_format.keep_with_next = True
             if img_abs and os.path.exists(img_abs):
                 p_img.add_run().add_picture(img_abs, width=img_width_in)
             else:
@@ -599,17 +604,21 @@ def render_report(
             apply_guojin_chart_box_borders(tbl, is_pair=True)
             col_widths = [DOUBLE_CHART_COL_DXA, DOUBLE_CHART_GAP_DXA, DOUBLE_CHART_COL_DXA]
             for r in range(3):
+                trPr = tbl.rows[r]._tr.get_or_add_trPr()
+                trPr.append(parse_xml(f"<w:cantSplit {nsdecls('w')}/>"))
                 for c in range(3):
                     set_cell_width_dxa(tbl.cell(r, c), col_widths[c])
 
-            # 分别填充左列（col=0）与右列（col=2），完整保留 ContentGraphTitle 原生样式
+            # 分别填充左列（col=0）与右列（col=2），完整保留 ContentGraphTitle 原生样式并防跨页分离
             for col_idx, prefix in [(0, "left"), (2, "right")]:
                 p_t = tbl.cell(0, col_idx).paragraphs[0]
                 p_t.style = get_style("ContentGraphTitle")
+                p_t.paragraph_format.keep_with_next = True
                 p_t.add_run(m.get(f"{prefix}_title", ""))
 
                 p_i = tbl.cell(1, col_idx).paragraphs[0]
                 p_i.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p_i.paragraph_format.keep_with_next = True
                 img_abs = resolve_image_path(m.get(f"{prefix}_image", ""), base_dir)
                 if img_abs and os.path.exists(img_abs):
                     p_i.add_run().add_picture(img_abs, width=Inches(3.3))
@@ -633,10 +642,11 @@ def render_report(
                 m.get("width", "auto").strip().lower() == "auto" and n_cols >= 5
             )
 
-            # 表格标题（完整保留 ContentGraphTitle / ContentGraphTitleSuo 原生楷体五号加粗斜体）
+            # 表格标题（加 keep_with_next 防表题留在上一页、表格掉到下一页）
             title_style = "ContentGraphTitle" if is_full_table else "ContentGraphTitleSuo"
             res_style = "ContentResource" if is_full_table else "ContentResourceSuo"
             p_t = doc.add_paragraph(style=get_style(title_style, "ContentGraphTitle"))
+            p_t.paragraph_format.keep_with_next = True
             p_t.add_run(m.get("title", "核心数据对比"))
             insert_element_before(anchor_el, p_t._element)
 
@@ -653,6 +663,11 @@ def render_report(
 
             col_w = total_w // max(n_cols, 1)
             for r_idx, row_vals in enumerate(rows_data):
+                # 禁止单行跨页截断；首行表头开启 tblHeader 跨页自动重复
+                trPr = tbl.rows[r_idx]._tr.get_or_add_trPr()
+                trPr.append(parse_xml(f"<w:cantSplit {nsdecls('w')}/>"))
+                if r_idx == 0:
+                    trPr.append(parse_xml(f"<w:tblHeader {nsdecls('w')}/>"))
                 for c_idx in range(n_cols):
                     cell = tbl.cell(r_idx, c_idx)
                     set_cell_width_dxa(cell, col_w)
@@ -692,11 +707,7 @@ def render_report(
 
 def main() -> None:
     """命令行入口。"""
-    default_tpl = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "模板资产",
-        "国金证券_公司深度研究模板.docx",
-    )
+    default_tpl = r"D:\深度报告\模板资产\国金证券_公司深度研究模板.docx"
     parser = argparse.ArgumentParser(description="国金证券深度报告 Word 模板渲染脚本")
     parser.add_argument("--md", required=True, help="完整初稿 Markdown 路径")
     parser.add_argument("--out", required=True, help="输出 Word (.docx) 路径")

@@ -18,7 +18,7 @@
 3. 支持 single（通栏单图）与 double（双图并排）两种画布尺寸，避免插入 Word 后字号变形。
 
 命令行用法：
-    python chart_maker.py --spec charts.json --out-dir 07_图表
+    D:\\anaconda3\\python.exe chart_maker.py --spec charts.json --out-dir 07_图表
 """
 
 import argparse
@@ -378,18 +378,29 @@ def render_single_chart(spec: Dict[str, Any], theme: Dict[str, Any], out_dir: st
             fontsize=font_cfg["legend_size"],
         )
 
-    # ==================== 6. 饼图 / 环形图 ====================
+    # ==================== 6. 饼图 / 环形图（自动防小扇区文字撞叠） ====================
     elif chart_type in ("pie", "donut"):
         vals = series_list[0]["values"]
+        total_v = sum(v for v in vals if v is not None) or 1.0
+        pcts = [(float(v) / total_v * 100.0) if v is not None else 0.0 for v in vals]
+        # 若存在任意小扇区（< 8%），自动切换为“大扇区内标占比 + 右侧完整图例”模式，彻底杜绝相邻小扇区标签撞叠
+        has_small_slice = any(p < 8.0 for p in pcts)
+
         colors = [palette[i % len(palette)] for i in range(len(categories))]
         wedgeprops = {"edgecolor": "#FFFFFF", "linewidth": 1.2}
         if chart_type == "donut":
             wedgeprops["width"] = 0.45
+
+        def _smart_autopct(pct: float) -> str:
+            if has_small_slice and pct < 7.0:
+                return ""
+            return f"{pct:.1f}%"
+
         wedges, texts, autotexts = ax.pie(
             vals,
-            labels=categories,
+            labels=None if has_small_slice else categories,
             colors=colors,
-            autopct="%1.1f%%",
+            autopct=_smart_autopct,
             startangle=90,
             counterclock=False,
             pctdistance=0.75 if chart_type == "donut" else 0.65,
@@ -399,6 +410,16 @@ def render_single_chart(spec: Dict[str, Any], theme: Dict[str, Any], out_dir: st
         for at in autotexts:
             at.set_color("#FFFFFF")
             at.set_fontsize(font_cfg["data_label_size"])
+        if has_small_slice:
+            legend_labels = [f"{cat}  {p:.1f}%" for cat, p in zip(categories, pcts)]
+            ax.legend(
+                wedges,
+                legend_labels,
+                loc="center left",
+                bbox_to_anchor=(0.98, 0.5),
+                frameon=False,
+                fontsize=font_cfg["legend_size"],
+            )
         ax.axis("equal")
 
     # ==================== 7. 公司发展历程时间轴 (timeline) ====================
@@ -467,7 +488,7 @@ def render_single_chart(spec: Dict[str, Any], theme: Dict[str, Any], out_dir: st
     # ==================== 8. 股权穿透架构图 (org_chart) ====================
     elif chart_type == "org_chart":
         # 结构: spec["top_nodes"] = [{"name": "...", "pct": "86.10%"}, ...]
-        #       spec["center_node"] = "示例公司电路股份有限公司（600000.SH）"
+        #       spec["center_node"] = "超颖电子电路股份有限公司（603175.SH）"
         #       spec["bottom_nodes"] = [{"name": "...", "pct": "100% / 生产基地"}, ...]
         top_nodes = spec.get("top_nodes", [])
         center_node = spec.get("center_node", "上市公司")
@@ -635,11 +656,51 @@ def render_single_chart(spec: Dict[str, Any], theme: Dict[str, Any], out_dir: st
         ax.set_title(spec["inner_title"], fontsize=font_cfg["title_size"], pad=22)
 
     plt.tight_layout()
+
+    # 像素级数据标签重叠自动检测（防止双轴/密集柱图出现文字糊在一起）
+    overlaps = detect_label_overlaps(fig)
+    if overlaps:
+        print(f"  🟡 [标签重叠提醒] {spec['filename']} 检测到 {len(overlaps)} 处数据标签像素框重叠：{overlaps[:3]}")
+
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, spec["filename"])
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return out_path
+
+
+def detect_label_overlaps(fig) -> List[str]:
+    """
+    渲染画布后提取所有坐标轴内数据标签（Text）的屏幕像素边界框，
+    检查两两之间是否在水平与垂直方向均发生 > 2px 重叠，及时暴露标签糊成一团的图表。
+    """
+    try:
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+    except Exception:
+        return []
+
+    boxes = []
+    for ax in fig.axes:
+        for txt in ax.texts:
+            content = (txt.get_text() or "").strip()
+            if not content or not txt.get_visible():
+                continue
+            bb = txt.get_window_extent(renderer=renderer)
+            if bb.width <= 0 or bb.height <= 0:
+                continue
+            boxes.append((content.replace("\n", " ")[:14], bb))
+
+    overlaps: List[str] = []
+    for i in range(len(boxes)):
+        t1, b1 = boxes[i]
+        for j in range(i + 1, len(boxes)):
+            t2, b2 = boxes[j]
+            ox = min(b1.x1, b2.x1) - max(b1.x0, b2.x0)
+            oy = min(b1.y1, b2.y1) - max(b1.y0, b2.y0)
+            if ox > 2.0 and oy > 2.0:
+                overlaps.append(f"'{t1}'↔'{t2}'")
+    return overlaps
 
 
 def main() -> None:

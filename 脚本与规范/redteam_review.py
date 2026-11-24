@@ -11,12 +11,12 @@
 4. **去公司硬编码**：保持通用的卖方专业护航立场，不将单个样本公司的特殊业务预设进全局模板。
 
 命令行用法：
-    python .\\脚本与规范\\redteam_review.py `
-      --md .\\示例公司\\05_完整初稿.md `
-      --meta .\\示例公司\\report_meta.json `
-      --snapshot .\\示例公司\\00_原始资料\\01_最新财报全科目快照.md `
-      --manifest .\\示例公司\\06_证据清单.json `
-      --out .\\示例公司\\05_红队审稿任务包.md
+    D:\\anaconda3\\python.exe D:\\深度报告\\脚本与规范\\redteam_review.py `
+      --md D:\\深度报告\\超颖电子\\05_完整初稿.md `
+      --meta D:\\深度报告\\超颖电子\\report_meta.json `
+      --snapshot D:\\深度报告\\超颖电子\\00_原始资料\\01_最新财报全科目快照.md `
+      --manifest D:\\深度报告\\超颖电子\\06_证据清单.json `
+      --out D:\\深度报告\\超颖电子\\05_红队审稿任务包.md
 """
 
 import argparse

@@ -9,8 +9,8 @@ description: 深度报告 Step 5B 合规工作底稿自动红框截图（PDF防�
 
 ## 规范真源
 
-- 底稿六道合规门禁与黑名单规则：`.\脚本与规范\workpaper_spec.md`
-- 官方底稿 Excel 模板：`.\模板资产\国金研报工作底稿模板.xlsx`
+- 底稿六道合规门禁与黑名单规则：`D:\深度报告\脚本与规范\workpaper_spec.md`
+- 官方底稿 Excel 模板：`D:\深度报告\模板资产\国金研报工作底稿模板.xlsx`
 
 ## 取证与豁免铁律
 
@@ -23,22 +23,31 @@ description: 深度报告 Step 5B 合规工作底稿自动红框截图（PDF防�
 
 ## 标准执行命令
 
+### 0. 一键批量截取全部 PDF/网页红框证据图（免写公司临时脚本）
+在 `06_证据清单.json` 各非豁免条目中写好 `capture_spec`（或 `capture_specs`）后，直接运行：
+```powershell
+D:\anaconda3\python.exe D:\深度报告\脚本与规范\auto_evidence_capture.py `
+  --manifest D:\深度报告\{公司名}\06_证据清单.json `
+  --out-dir D:\深度报告\{公司名}\08_底稿证据 --write-back
+```
+（自动跳过已存在含 `.meta.json` 的截图；加 `--overwrite` 可强制重截。）
+
 ### 1. 仅跑六道合规门禁审计（快速排雷）
 ```powershell
 # 草稿预览模式（0 🔴 违规时若仍有待补截图，打印 [INCOMPLETE] 而非 PASS）：
-python .\脚本与规范\build_workpaper.py `
-  --manifest .\{公司名}\06_证据清单.json --audit-only --strict
+D:\anaconda3\python.exe D:\深度报告\脚本与规范\build_workpaper.py `
+  --manifest D:\深度报告\{公司名}\06_证据清单.json --audit-only --strict
 
 # 正式发布模式（零容忍：存在任意 1 张待补截图或 1 条裸根域名网址即 exit 1 阻断）：
-python .\脚本与规范\build_workpaper.py `
-  --manifest .\{公司名}\06_证据清单.json --audit-only --release
+D:\anaconda3\python.exe D:\深度报告\脚本与规范\build_workpaper.py `
+  --manifest D:\深度报告\{公司名}\06_证据清单.json --audit-only --release
 ```
 
 ### 2. 正式生成高清工作底稿 Excel
 ```powershell
-python .\脚本与规范\build_workpaper.py `
-  --manifest .\{公司名}\06_证据清单.json `
-  --out .\{公司名}\{公司名}_工作底稿.xlsx --strict
+D:\anaconda3\python.exe D:\深度报告\脚本与规范\build_workpaper.py `
+  --manifest D:\深度报告\{公司名}\06_证据清单.json `
+  --out D:\深度报告\{公司名}\{公司名}_工作底稿.xlsx --strict
 ```
 （正式发版前将 `--strict` 替换为 `--release`，确保 0 待补截图、0 裸根域名、0 黑名单、0 无红框图。）
 

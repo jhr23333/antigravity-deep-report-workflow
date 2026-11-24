@@ -633,3 +633,170 @@ def render_notice_text_card(
         page_text_norm=full_norm,
     )
     return True
+
+
+def run_manifest_capture(
+    manifest_path: str,
+    out_dir: Optional[str] = None,
+    overwrite: bool = False,
+    write_back: bool = False,
+) -> Tuple[int, int, int]:
+    """
+    通用批量截图驱动器：直接读取 06_证据清单.json 中各条目的 `capture_spec`（单个 dict）
+    或 `capture_specs`（多图 list），自动批量执行 PDF 防歧义红框截图与 Chrome CDP 网页红框截图，
+    彻底消除“每家公司都要另写临时截图胶水脚本”的问题。
+
+    单条 capture_spec 标准结构示例：
+    - PDF 截图：
+      {
+        "type": "pdf",
+        "out_file": "fig02_hdi_hkex.png",
+        "pdf_path": "00_原始资料/pdfs/港股招股书.pdf",   # 相对 manifest 所在目录或绝对路径
+        "page_num": 140,                                 # 可选；不填则按 must_all 自动防歧义找页
+        "must_all": ["43.8%", "HDI"],                    # 自动找页必需词
+        "must_contain": ["43.8%"],                       # 截图页硬校验数字
+        "keywords": ["43.8%", "HDI"],                    # 红框高亮词（缺省复用 must_contain）
+        "banner": "超颖电子港股聆讯稿 P.140"
+      }
+    - 网页截图：
+      {
+        "type": "web",
+        "out_file": "fig15_trendforce_capex.png",
+        "url": "https://www.trendforce.com/presscenter/news/...",
+        "must_contain": ["957", "106%"],
+        "banner": "TrendForce 官方新闻稿"
+      }
+
+    返回：(成功数, 跳过数, 失败数)
+    """
+    manifest_dir = os.path.dirname(os.path.abspath(manifest_path))
+    target_dir = os.path.abspath(out_dir or os.path.join(manifest_dir, "08_底稿证据"))
+    os.makedirs(target_dir, exist_ok=True)
+
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    ok_cnt = 0
+    skip_cnt = 0
+    fail_cnt = 0
+    modified = False
+
+    for sec in manifest.get("sections", []):
+        for item in sec.get("items", []):
+            if item.get("is_database_exempt"):
+                continue
+            specs = []
+            if isinstance(item.get("capture_specs"), list):
+                specs = item["capture_specs"]
+            elif isinstance(item.get("capture_spec"), dict):
+                specs = [item["capture_spec"]]
+            if not specs:
+                continue
+
+            item_label = item.get("label") or item.get("title") or "未命名条目"
+            resolved_entries = []
+
+            for idx, sp in enumerate(specs, 1):
+                ctype = str(sp.get("type", "")).lower().strip()
+                out_file = sp.get("out_file") or f"{item.get('id', 'ev')}_{idx}.png"
+                out_png = out_file if os.path.isabs(out_file) else os.path.join(target_dir, out_file)
+                meta_path = f"{out_png}.meta.json"
+
+                if (not overwrite) and os.path.exists(out_png) and os.path.exists(meta_path):
+                    skip_cnt += 1
+                    print(f"  [SKIP] {item_label[:26]} -> {os.path.basename(out_png)}（已存在含 .meta.json）")
+                    resolved_entries.append((out_png, sp.get("url", "")))
+                    continue
+
+                if ctype == "pdf":
+                    raw_pdf = sp.get("pdf_path", "")
+                    pdf_path = raw_pdf if os.path.isabs(raw_pdf) else os.path.join(manifest_dir, raw_pdf)
+                    must_contain = list(sp.get("must_contain") or sp.get("must_all") or [])
+                    keywords = list(sp.get("keywords") or must_contain)
+                    page_num = sp.get("page_num")
+                    if page_num is None:
+                        must_all = list(sp.get("must_all") or must_contain)
+                        page_num = find_verified_pdf_page(pdf_path, must_all)
+                    if not page_num:
+                        fail_cnt += 1
+                        print(f"  [FAIL] {item_label[:26]} -> PDF 未找到同时命中 {sp.get('must_all') or must_contain} 的页面")
+                        continue
+                    banner = sp.get("banner") or f"{os.path.basename(pdf_path)} P.{page_num}"
+                    ok = capture_pdf_with_redbox(
+                        pdf_path=pdf_path,
+                        page_num=int(page_num),
+                        keywords=keywords,
+                        out_png=out_png,
+                        banner_text=banner,
+                        must_contain=must_contain,
+                        require_redbox=True,
+                    )
+                    if ok:
+                        ok_cnt += 1
+                        print(f"  [OK-PDF] {item_label[:26]} -> {os.path.basename(out_png)} (P.{page_num})")
+                        resolved_entries.append((out_png, ""))
+                    else:
+                        fail_cnt += 1
+                        print(f"  [FAIL-PDF] {item_label[:26]} -> P.{page_num} 校验或红框失败")
+
+                elif ctype == "web":
+                    url = sp.get("url", "").strip()
+                    must_contain = list(sp.get("must_contain") or [])
+                    banner = sp.get("banner") or item_label[:40]
+                    ok, final_url, msg = capture_web_with_dom_redbox(
+                        url=url,
+                        must_contain=must_contain,
+                        out_png=out_png,
+                        banner_prefix=banner,
+                    )
+                    if ok:
+                        ok_cnt += 1
+                        print(f"  [OK-WEB] {item_label[:26]} -> {os.path.basename(out_png)}")
+                        resolved_entries.append((out_png, final_url))
+                    else:
+                        fail_cnt += 1
+                        print(f"  [FAIL-WEB] {item_label[:26]} -> {msg}")
+                else:
+                    fail_cnt += 1
+                    print(f"  [FAIL] {item_label[:26]} -> 未知 capture_spec.type='{ctype}'")
+
+            if write_back and resolved_entries:
+                rel_paths = [os.path.relpath(p, manifest_dir).replace("\\", "/") for p, _ in resolved_entries]
+                if len(rel_paths) == 1:
+                    item["evidence_screenshot"] = rel_paths[0]
+                    if resolved_entries[0][1]:
+                        item["source_url"] = resolved_entries[0][1]
+                else:
+                    item["evidence_screenshots"] = [
+                        {"path": rp, "url": u} if u else {"path": rp}
+                        for rp, (_, u) in zip(rel_paths, resolved_entries)
+                    ]
+                modified = True
+
+    if write_back and modified:
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2)
+        print(f"[INFO] 已自动将最新截图路径回写至 {manifest_path}")
+
+    print(f"[SUMMARY] 批量截图完成：成功 {ok_cnt} 张 | 跳过 {skip_cnt} 张 | 失败 {fail_cnt} 张")
+    return ok_cnt, skip_cnt, fail_cnt
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description="国金证券研报底稿——通用批量红框截图 CLI")
+    parser.add_argument("--manifest", required=True, help="06_证据清单.json 路径")
+    parser.add_argument("--out-dir", default=None, help="截图输出目录（默认与 manifest 同级的 08_底稿证据/）")
+    parser.add_argument("--overwrite", action="store_true", help="强制覆盖已有含 .meta.json 的截图")
+    parser.add_argument("--write-back", action="store_true", help="截图完成后自动把相对路径与最终 URL 回写进清单")
+    args = parser.parse_args()
+
+    _, _, fails = run_manifest_capture(
+        manifest_path=args.manifest,
+        out_dir=args.out_dir,
+        overwrite=args.overwrite,
+        write_back=args.write_back,
+    )
+    sys.exit(1 if fails > 0 else 0)

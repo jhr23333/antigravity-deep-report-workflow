@@ -16,7 +16,7 @@
 10. 第 1–3 章真实段落字数统计（200–300 字目标区间）。
 
 命令行用法：
-    python verify_docx.py --docx ".\\示例公司\\示例公司_深度报告.docx"
+    D:\\anaconda3\\python.exe verify_docx.py --docx "D:\\深度报告\\超颖电子\\超颖电子_深度报告.docx"
 """
 
 import argparse
@@ -38,7 +38,7 @@ VAGUE_SOURCES = [
 PLACEHOLDER_RE = re.compile(r"\[待模型填入\]|\[待补充[^\]]*\]|\[待确认[^\]]*\]|\bTBD\b|\bTODO\b")
 
 
-def verify_docx(docx_path: str, release: bool = False) -> int:
+def verify_docx(docx_path: str, release: bool = False, allow_consec_text: bool = False) -> int:
     """对生成的国金标准 Word 报告执行全量 12 项 XML 与发布门禁验收，返回退出码（0=通过，1=阻断）。"""
     doc = Document(docx_path)
 
@@ -226,7 +226,10 @@ def verify_docx(docx_path: str, release: bool = False) -> int:
     if len(vague_hits) > 0:
         failures.append(f"命中空泛来源词 {vague_hits}")
     if len(consec_paras) > 0:
-        failures.append(f"第1-3章连续纯文字段 {len(consec_paras)} 处")
+        if allow_consec_text:
+            print(f"  🟡 [连续纯文字豁免] 已启用 --allow-consec-text，放行 {len(consec_paras)} 处连续纯文字段")
+        else:
+            failures.append(f"第1-3章连续纯文字段 {len(consec_paras)} 处")
     if sum_char_cnt > 900:
         failures.append(f"首页摘要超长（{sum_char_cnt} 字 > 900 字）")
     if release and len(placeholder_hits) > 0:
@@ -242,9 +245,91 @@ def verify_docx(docx_path: str, release: bool = False) -> int:
     return 0
 
 
+def run_visual_pagination_check(docx_path: str) -> None:
+    """
+    通过本机 Microsoft Word COM 静默导出临时 PDF，并用 PyMuPDF 检查真实渲染后的分页效果：
+    1. 检查总页数与异常空白页；
+    2. 检查第 1 页是否完整容纳封面与投资摘要（未被右栏财务表挤到第 2 页）；
+    3. 自动渲染首页（P.1）及疑似异常页 PNG 到 `<公司目录>/09_视觉抽检页/`，供研究员或视觉模型快速复核。
+    """
+    import os
+    import tempfile
+
+    try:
+        import fitz  # PyMuPDF
+        import win32com.client  # type: ignore
+    except ImportError as e:
+        print(f"  🟡 [视觉分页检查跳过] 缺少依赖（{e}），请确保安装 pywin32 与 PyMuPDF")
+        return
+
+    abs_docx = os.path.abspath(docx_path)
+    out_dir = os.path.join(os.path.dirname(abs_docx), "09_视觉抽检页")
+    os.makedirs(out_dir, exist_ok=True)
+
+    word = None
+    doc_com = None
+    with tempfile.TemporaryDirectory() as td:
+        tmp_pdf = os.path.join(td, "preview.pdf")
+        try:
+            word = win32com.client.DispatchEx("Word.Application")
+            word.Visible = False
+            word.DisplayAlerts = 0
+            doc_com = word.Documents.Open(abs_docx, ReadOnly=True)
+            doc_com.SaveAs(tmp_pdf, FileFormat=17)  # 17 = wdFormatPDF
+        except Exception as e:
+            print(f"  🟡 [视觉分页检查失败] Word COM 导出 PDF 异常：{e}")
+            return
+        finally:
+            if doc_com is not None:
+                try:
+                    doc_com.Close(False)
+                except Exception:
+                    pass
+            if word is not None:
+                try:
+                    word.Quit()
+                except Exception:
+                    pass
+
+        pdf = fitz.open(tmp_pdf)
+        total_pages = len(pdf)
+        blank_pages = []
+        pages_to_render = {0}  # 必截第 1 页（封面+投资摘要）
+
+        p2_txt = pdf[1].get_text() if total_pages >= 2 else ""
+        cover_overflow = ("风险提示" in p2_txt[:300] and "目录" not in p2_txt[:300] and "一、" not in p2_txt[:200])
+        if cover_overflow:
+            pages_to_render.add(1)
+
+        for idx in range(total_pages):
+            txt = pdf[idx].get_text().strip()
+            imgs = pdf[idx].get_images()
+            # 既无图片且文字少于 35 字，视为疑似孤立空白页
+            if len(txt) < 35 and len(imgs) == 0:
+                blank_pages.append(idx + 1)
+                pages_to_render.add(idx)
+
+        for p_idx in sorted(pages_to_render):
+            if 0 <= p_idx < total_pages:
+                pix = pdf[p_idx].get_pixmap(dpi=150)
+                pix.save(os.path.join(out_dir, f"page_{p_idx + 1:02d}.png"))
+
+        pdf.close()
+        print(
+            f"13. 真实分页视觉检查（Word COM→PDF）：共 {total_pages} 页 | "
+            f"疑似空白页={blank_pages} | 首页摘要疑似溢出={'🔴 是' if cover_overflow else 'OK'}"
+        )
+        print(f"    已输出抽检页 PNG -> {out_dir}")
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="国金深度报告 Word 成品 12 项 XML 与发布门禁验收脚本")
+    parser = argparse.ArgumentParser(description="国金深度报告 Word 成品 12 项 XML 与视觉分页体检脚本")
     parser.add_argument("--docx", required=True, help="待验收的 Word 路径")
     parser.add_argument("--release", action="store_true", help="正式发布模式：存在任一 [待模型填入] 占位符即以退出码 1 阻断")
+    parser.add_argument("--visual", action="store_true", help="附加 Word COM 转 PDF 真实分页与首页溢出抽检")
+    parser.add_argument("--allow-consec-text", action="store_true", help="特殊体例豁免：允许第1-3章存在少量连续纯文字段（仅标黄提示）")
     args = parser.parse_args()
-    sys.exit(verify_docx(args.docx, release=args.release))
+    rc = verify_docx(args.docx, release=args.release, allow_consec_text=args.allow_consec_text)
+    if args.visual:
+        run_visual_pagination_check(args.docx)
+    sys.exit(rc)

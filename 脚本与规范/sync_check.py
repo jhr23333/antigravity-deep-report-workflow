@@ -15,11 +15,12 @@
 5. **首页摘要字数护栏（≤ 850 字）与 `[待模型填入]` 占位符检查**（`--release` 模式零容忍阻断）。
 
 命令行用法：
-    python .\\脚本与规范\\sync_check.py --dir .\\示例公司 --clean-orphans --strict
-    python .\\脚本与规范\\sync_check.py --dir .\\示例公司 --release
+    D:\\anaconda3\\python.exe D:\\深度报告\\脚本与规范\\sync_check.py --dir D:\\深度报告\\超颖电子 --clean-orphans --strict
+    D:\\anaconda3\\python.exe D:\\深度报告\\脚本与规范\\sync_check.py --dir D:\\深度报告\\超颖电子 --release
 """
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -32,9 +33,9 @@ PLACEHOLDER_RE = re.compile(r"\[待模型填入\]|\[待补充[^\]]*\]|\[待确�
 
 
 def _norm_key(s: Any) -> str:
-    """归一化期间/分类/公司名，用于跨表精确对齐（兼容 2026Q1-Q3 / 26Q1-Q3 等简写）。"""
+    """归一化期间/分类/公司名，用于跨表精确对齐（通用正则将 20XX 归一为 XX，不限年份区间）。"""
     t = re.sub(r"[\s（）()：:【】\[\]—–\-]", "", str(s or "")).lower()
-    t = t.replace("2026", "26").replace("2025", "25").replace("2024", "24").replace("2023", "23").replace("2022", "22")
+    t = re.sub(r"20(\d{2})", r"\1", t)
     return t
 
 
@@ -238,28 +239,176 @@ def audit_md_tables_vs_manifest(
     return errs
 
 
+def audit_prose_numbers(
+    md_text: str,
+    manifest_data: Dict[str, Any],
+    snapshot_text: str,
+) -> List[Dict[str, str]]:
+    """
+    正文纯文字段落数字核查（高精度防误报版）：
+    提取正文中带明确财务/业务单位的小数指标（亿元/万元/亿美元/万㎡/%/pct），
+    对照【底稿清单全量数字 + 财报快照全量数字 + 正文表格数字】核验；
+    凡未落在已核验数字池（含 1 位小数四舍五入与正负绝对值）中的小数，记为 🟡 待人工核对条目，
+    并附精确行号、所在章节与原文片段，写入 09_对账与质检报告.md 供研究员直接定位。
+    """
+    verified_pool: Set[float] = set()
+
+    def _add_nums(text: str) -> None:
+        cleaned = str(text or "").replace(",", "")
+        for tok in re.findall(r"-?\d+(?:\.\d+)?", cleaned):
+            try:
+                v = abs(float(tok))
+                verified_pool.add(round(v, 2))
+                verified_pool.add(round(v, 1))
+            except ValueError:
+                pass
+
+    _add_nums(json.dumps(manifest_data, ensure_ascii=False))
+    _add_nums(snapshot_text)
+
+    # 同步纳入正文 Markdown 表格中的数字（表格本身已与底稿逐行核对）
+    for ln in md_text.splitlines():
+        if ln.strip().startswith("|"):
+            _add_nums(ln)
+
+    unit_pat = re.compile(
+        r"([+-]?\d+\.\d+)\s*(亿元|万元|亿美元|百万美元|万亿美元|万㎡|万平方米|%|pct|个百分点)"
+    )
+
+    findings: List[Dict[str, str]] = []
+    cur_sec = "前言/未分节"
+    in_comment = False
+
+    for lineno, raw_ln in enumerate(md_text.splitlines(), 1):
+        s = raw_ln.strip()
+        if "<!--" in s:
+            in_comment = True
+        if in_comment:
+            if "-->" in s:
+                in_comment = False
+            continue
+        if not s or s.startswith("|") or s.startswith("![") or s.startswith(">"):
+            continue
+        if s.startswith("#"):
+            cur_sec = s.lstrip("#").strip()[:36]
+            continue
+
+        # 先去掉数字内部的千分位逗号（如 4,250.48万元 -> 4250.48万元），避免被误拆成 250.48万元
+        s_clean = re.sub(r"(?<=\d),(?=\d)", "", s)
+        for m in unit_pat.finditer(s_clean):
+            val_str, unit = m.group(1), m.group(2)
+            v_abs = abs(float(val_str))
+            r2 = round(v_abs, 2)
+            r1 = round(v_abs, 1)
+            # 容差匹配：允许 0.05 以内舍入或恰好命中 1/2 位小数池
+            hit = (r2 in verified_pool) or (r1 in verified_pool) or any(
+                abs(v_abs - pv) <= 0.05 for pv in verified_pool
+            )
+            if not hit:
+                start = max(0, m.start() - 18)
+                end = min(len(s_clean), m.end() + 18)
+                snippet = s_clean[start:end].replace("|", "/")
+                findings.append({
+                    "line": str(lineno),
+                    "section": cur_sec,
+                    "metric": f"{val_str}{unit}",
+                    "snippet": f"…{snippet}…",
+                })
+    return findings
+
+
+def write_qc_report(
+    company_dir: str,
+    reds: List[str],
+    yellows: List[str],
+    prose_findings: List[Dict[str, str]],
+    summary_line: str,
+    release: bool,
+) -> str:
+    """
+    每次对账自动落盘《09_对账与质检报告.md》，把所有 🔴 阻断项、🟡 标黄提示
+    以及正文段落未锚定小数（含精确行号与原句片段）集中列成表格，研究员点开即查，无需翻终端日志。
+    """
+    out_path = os.path.join(company_dir, "09_对账与质检报告.md")
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    mode = "正式发布门禁 (--release)" if release else "草稿体检模式 (--strict)"
+
+    lines = [
+        "# 深度报告三端对账与质检报告",
+        "",
+        f"> 生成时间：{now}｜检查模式：{mode}",
+        f"> 汇总：`{summary_line}`",
+        "",
+        "## 一、🔴 必须修复项（阻断发版）",
+        "",
+    ]
+    if not reds:
+        lines.append("- 无 🔴 阻断项。")
+    else:
+        for r in reds:
+            lines.append(f"- {r}")
+
+    lines.extend(["", "## 二、🟡 标黄提醒项（草稿允许，发版前需逐项确认）", ""])
+    if not yellows:
+        lines.append("- 无 🟡 标黄项。")
+    else:
+        for y in yellows:
+            lines.append(f"- {y}")
+
+    lines.extend([
+        "",
+        "## 三、🟡 正文纯文字段落未在图表/底稿/财报快照中锚定的小数指标（供快速复核）",
+        "",
+        "> 说明：以下为正文中带明确财务/业务单位的小数，但未直接出现在 `06_证据清单.json` 或 `01_最新财报全科目快照.md` 中（可能是合理文字衍生计算/背景常识，也可能是改图忘改文导致的数字漂移），请按行号在 `05_完整初稿.md` 中快速抽核。",
+        "",
+    ])
+    if not prose_findings:
+        lines.append("- 全部正文小数指标均已在底稿/财报快照中锚定（0 处异常）。")
+    else:
+        lines.extend([
+            "| 行号 | 所在章节 | 指标数值 | 原文片段 |",
+            "|---:|---|---|---|",
+        ])
+        for pf in prose_findings:
+            lines.append(f"| L{pf['line']} | {pf['section']} | `{pf['metric']}` | {pf['snippet']} |")
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return out_path
+
+
 def check_redteam_review_binding(company_dir: str, current_sha: str) -> Tuple[Optional[str], Optional[str]]:
     """
-    核查 05_红队审稿意见_Claude.md 是否存在、是否绑定到当前最新稿件哈希、以及放行结论。
+    核查红队审稿报告（兼容 05_红队审稿意见.md 与 05_红队审稿意见_Claude.md，支持 Opus/Sonnet/ChatGPT/Gemini）
+    是否存在、是否绑定到当前最新稿件哈希、以及放行结论。
     返回 (release_blocker_msg, info_or_warn_msg)。
     """
-    rev_path = os.path.join(company_dir, "05_红队审稿意见_Claude.md")
-    if not os.path.exists(rev_path):
+    candidates = [
+        os.path.join(company_dir, "05_红队审稿意见.md"),
+        os.path.join(company_dir, "05_红队审稿意见_Claude.md"),
+    ]
+    existing = [p for p in candidates if os.path.exists(p)]
+    if not existing:
         return (
-            "缺少红队审稿报告 05_红队审稿意见_Claude.md",
-            "🟡 [未执行Step 3.5红队审稿] 未找到 05_红队审稿意见_Claude.md",
+            "缺少红队审稿报告（05_红队审稿意见.md 或 05_红队审稿意见_Claude.md）",
+            "🟡 [未执行Step 3.5红队审稿] 未找到 05_红队审稿意见.md / 05_红队审稿意见_Claude.md",
         )
+    # 若两者并存，优先取最新修改的一份
+    rev_path = max(existing, key=os.path.getmtime)
+    rev_name = os.path.basename(rev_path)
 
     with open(rev_path, "r", encoding="utf-8") as f:
         txt = f.read()
 
     sha_m = re.search(r"draft_sha256\s*:\s*([a-fA-F0-9]+)", txt)
     ver_m = re.search(r"verdict\s*:\s*([A-Z_]+)", txt)
+    mod_m = re.search(r"reviewer_model\s*:\s*([^\r\n]+)", txt)
+    model_str = mod_m.group(1).strip() if mod_m else "未注明模型"
 
     if not sha_m or not ver_m:
         return (
-            f"审稿报告未包含机器可读版本头（当前稿件指纹={current_sha}），无法证明最终稿已通过复审",
-            f"🟡 [审稿版本未绑定] 05_红队审稿意见_Claude.md 缺少 REVIEW_META（draft_sha256={current_sha}），修订后需由 Opus 复审签认",
+            f"审稿报告 {rev_name} 未包含机器可读版本头（当前稿件指纹={current_sha}），无法证明最终稿已通过复审",
+            f"🟡 [审稿版本未绑定] {rev_name} 缺少 REVIEW_META（draft_sha256={current_sha}），正式发版前须复审签认",
         )
 
     rev_sha = sha_m.group(1).strip()
@@ -274,7 +423,7 @@ def check_redteam_review_binding(company_dir: str, current_sha: str) -> Tuple[Op
             f"审稿结论为 {verdict}，未获放行",
             f"🟡 [审稿未放行] 当前版本审稿结论为 {verdict}",
         )
-    return None, f"[INFO] 红队审稿版本绑定一致（draft_sha256={current_sha}，verdict={verdict}）"
+    return None, f"[INFO] 红队审稿版本绑定一致（{rev_name}｜模型={model_str}｜draft_sha256={current_sha}｜verdict={verdict}）"
 
 
 def run_sync_check(
@@ -362,6 +511,18 @@ def run_sync_check(
     table_drift_errs = audit_md_tables_vs_manifest(md_tables, manifest_tables)
     reds.extend(table_drift_errs)
 
+    # 5.5 正文纯文字段落小数指标锚定检查（对照底稿清单 + 财报快照 + 表格）
+    snapshot_path = os.path.join(company_dir, "00_原始资料", "01_最新财报全科目快照.md")
+    snapshot_text = ""
+    if os.path.exists(snapshot_path):
+        with open(snapshot_path, "r", encoding="utf-8") as f:
+            snapshot_text = f.read()
+    prose_findings = audit_prose_numbers(md_text, manifest_data, snapshot_text)
+    if prose_findings:
+        yellows.append(
+            f"🟡 [正文段落未锚定小数] 发现 {len(prose_findings)} 处正文带单位小数未出现在底稿/财报快照中（已带行号写入 09_对账与质检报告.md 供抽核）"
+        )
+
     # 6. 首页摘要字数、模型占位符、红队审稿版本哈希核查
     if meta_text:
         meta = json.loads(meta_text)
@@ -394,18 +555,22 @@ def run_sync_check(
     elif rev_msg:
         print(rev_msg)
 
-    print(
-        f"[SUMMARY] 正文/画图/底稿图表 {len(md_imgs)}/{len(cfg_img_set)}/{len(manifest_charts)} 张 | "
+    summary_line = (
+        f"正文/画图/底稿图表 {len(md_imgs)}/{len(cfg_img_set)}/{len(manifest_charts)} 张 | "
         f"正文/底稿表格 {len(md_tables)}/{len(manifest_tables)} 张 | "
-        f"期间数值错配 {len(chart_drift_errs)} 处 | 表格数值错位 {len(table_drift_errs)} 处 | 占位符 {ph_cnt} 处"
+        f"期间数值错配 {len(chart_drift_errs)} 处 | 表格数值错位 {len(table_drift_errs)} 处 | "
+        f"正文未锚定小数 {len(prose_findings)} 处 | 占位符 {ph_cnt} 处"
     )
+    print(f"[SUMMARY] {summary_line}")
+    qc_path = write_qc_report(company_dir, reds, yellows, prose_findings, summary_line, release)
+    print(f"[REPORT] 已生成可视化质检清单 -> {qc_path}")
     return reds, yellows
 
 
 def main() -> None:
     """命令行入口。"""
     parser = argparse.ArgumentParser(description="国金深度报告三端有序对账、审稿版本绑定与发布门禁脚本")
-    parser.add_argument("--dir", required=True, help="公司报告目录（如 .\\示例公司）")
+    parser.add_argument("--dir", required=True, help="公司报告目录（如 D:\\深度报告\\超颖电子）")
     parser.add_argument("--clean-orphans", action="store_true", help="自动删除 07_图表/ 中未被正文引用的旧 PNG")
     parser.add_argument("--strict", action="store_true", help="草稿严格模式：存在任一 🔴 错位即返回退出码 1")
     parser.add_argument("--release", action="store_true", help="正式发布门禁：同时拦截未填模型占位与未绑定终稿版本的红队审稿")

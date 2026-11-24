@@ -9,52 +9,53 @@ description: 深度报告 Step 5A 制图、三端【期间×数值】有序对�
 
 ## 规范真源
 
-- 图表视觉配色（黑蓝灰、无网格线、300 DPI）：`.\脚本与规范\chart_theme.json`
-- Word 样式映射与单图缩进规范：`.\脚本与规范\report_template_spec.md`
-- 官方 Word 模板：`.\模板资产\国金证券_公司深度研究模板.docx`
+- 图表视觉配色（黑蓝灰、无网格线、300 DPI）：`D:\深度报告\脚本与规范\chart_theme.json`
+- Word 样式映射与单图缩进规范：`D:\深度报告\脚本与规范\report_template_spec.md`
+- 官方 Word 模板：`D:\深度报告\模板资产\国金证券_公司深度研究模板.docx`
 
 ## 标准执行流水线
 
 ### 1. 批量生成 300 DPI 高清图表
 ```powershell
-python .\脚本与规范\chart_maker.py `
-  --spec .\{公司名}\charts.json `
-  --out-dir .\{公司名}\07_图表
+D:\anaconda3\python.exe D:\深度报告\脚本与规范\chart_maker.py `
+  --spec D:\深度报告\{公司名}\charts.json `
+  --out-dir D:\深度报告\{公司名}\07_图表
 ```
 
 ### 2. 三端【期间 × 数值】有序对账 + 清理孤儿旧图
 ```powershell
 # 草稿阶段（允许 [待模型填入] 与未复审黄灯，拦死年份互换/表格错位/缺图）：
-python .\脚本与规范\sync_check.py `
-  --dir .\{公司名} --clean-orphans --strict
+D:\anaconda3\python.exe D:\深度报告\脚本与规范\sync_check.py `
+  --dir D:\深度报告\{公司名} --clean-orphans --strict
 
 # 正式发布（零容忍：占位符必须为 0、审稿 draft_sha256 必须匹配最新终稿）：
-python .\脚本与规范\sync_check.py `
-  --dir .\{公司名} --release
+D:\anaconda3\python.exe D:\深度报告\脚本与规范\sync_check.py `
+  --dir D:\深度报告\{公司名} --release
 ```
-**对账覆盖范围**：
+**对账覆盖范围**（每次运行同步落盘 `D:\深度报告\{公司名}\09_对账与质检报告.md`，集中列出所有 🔴/🟡 与精确行号）：
 - 正文 `05_完整初稿.md` ↔ `charts.json` ↔ `07_图表/` 图片完整一一对应；
 - `charts.json` ↔ `06_证据清单.json` 按 **`(期间/分类, 数值)` 有序配对**（哪怕仅互换两年数值也立即 🔴 报错）；
 - `05_完整初稿.md` 每张 `TABLE_META` 表格 ↔ `06_证据清单.json` `type="table"` 逐行数值核对；
-- 首页摘要字数护栏（`≤ 850 字`）与 `05_红队审稿意见_Claude.md` 指纹绑定检查。
+- 正文纯文字段落带单位小数指标 ↔ 底稿/财报快照锚定检查（未锚定项带行号写入 `09_对账与质检报告.md`）；
+- 首页摘要字数护栏（`≤ 850 字`）与红队审稿报告（兼容 Opus/Sonnet/Gemini/ChatGPT）指纹绑定检查。
 
-### 3. 渲染国金官方 Word 报告
+### 3. 渲染国金官方 Word 报告（内置防图题分离 `keepNext` 与防表行腰斩 `cantSplit`）
 ```powershell
-python .\脚本与规范\render_docx.py `
-  --md .\{公司名}\05_完整初稿.md `
-  --meta .\{公司名}\report_meta.json `
-  --out .\{公司名}\{公司名}_深度报告.docx
+D:\anaconda3\python.exe D:\深度报告\脚本与规范\render_docx.py `
+  --md D:\深度报告\{公司名}\05_完整初稿.md `
+  --meta D:\深度报告\{公司名}\report_meta.json `
+  --out D:\深度报告\{公司名}\{公司名}_深度报告.docx
 ```
 
-### 4. Word 12 项 XML 与占位符体检
+### 4. Word 12 项 XML 体检 + Word COM 真实分页视觉抽检
 ```powershell
-# 草稿阶段（11 项 XML/表格居中/摘要字数全过即 exit 0，第 12 项仅标黄提示剩余 [待模型填入]）：
-python .\脚本与规范\verify_docx.py `
-  --docx .\{公司名}\{公司名}_深度报告.docx
+# 草稿阶段（11 项 XML 全过即 exit 0；加 --visual 可额外导出首页及疑似异常页 PNG 到 09_视觉抽检页/）：
+D:\anaconda3\python.exe D:\深度报告\脚本与规范\verify_docx.py `
+  --docx D:\深度报告\{公司名}\{公司名}_深度报告.docx --visual
 
 # 正式发布（12 项全检，存在任意 1 处 [待模型填入]/TBD/TODO 即 exit 1 阻断）：
-python .\脚本与规范\verify_docx.py `
-  --docx .\{公司名}\{公司名}_深度报告.docx --release
+D:\anaconda3\python.exe D:\深度报告\脚本与规范\verify_docx.py `
+  --docx D:\深度报告\{公司名}\{公司名}_深度报告.docx --release --visual
 ```
 
 ## 异常处置原则
