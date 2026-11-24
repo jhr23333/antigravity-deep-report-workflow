@@ -14,7 +14,7 @@
 | **Step 2 段落级大纲 + 白名单一手源前置锁定** | 主 Agent + 用户确认 | 边搜边出精确到 `(a)/(b)/(c)` 段落级大纲与图表清单；**前置锁定每张行业核心图的白名单一手 URL / PDF 页码**（拿不到白名单一手出处的数据直接剔除，杜绝写完返工）；用户拍板后冻结初版 | `03_段落级大纲.md`、`00_原始资料\02_行业公开数据包.md` |
 | **Step 3 Subagent 撰稿与动态修订** | 主 Agent 编排 + Subagents | 按二级章节派发 Subagent 写正文 + 提取证据清单（只喂 SSOT 规范 + 锚点卡 + 本节资料包，不灌聊天历史）；公开依据不足时通过 `[大纲修订建议]` 动态调纲；统稿合并 | `04_分节草稿\*.md`、`05_完整初稿.md`、`06_证据清单.json`、`charts.json`、`report_meta.json` |
 | **Step 3.5 独立联网红队审稿（必过门禁）** | **首选 Antigravity 原生 Claude Opus 5.5**（配额紧张可切 Sonnet 5.5 / Gemini 4 High / 外部 ChatGPT 回填） | 先跑 `redteam_review.py` 生成带 `draft_sha256` 版本指纹的精简任务包，再派发零历史独立审稿员 **直接通读正文与摘要并调用 `search_web` 联网核查（默认不全文翻阅大 PDF，仅遇异常数值或分歧时定点查对应页码）**；坚持卖方偏乐观护航立场，审稿结论带 `draft_sha256` 落盘 | `05_红队审稿意见.md`（兼容 `_Claude.md`，含 `REVIEW_META` 版本绑定）、修订版 `05_完整初稿.md` & `report_meta.json` |
-| **Step 4 初稿复核与财务拍数** | 用户 + 主 Agent | 用户审定 Opus 修订后的初稿，填入第四章手调盈利预测模型关键数字（分业务营收/毛利率/三费/估值/目标价） | 定稿版 `05_完整初稿.md`、`report_meta.json` |
+| **Step 4 初稿复核（保留 `[待模型填入]`）** | 用户确认 | 用户审定修订后的正文逻辑与事实；**盈利预测、估值、目标价与评级一律保持 `[待模型填入]`，不要求回填进 Markdown**，待 Step 5 产出 Word 后由用户自行刷模型并配合国金插件填入 | 定稿版 `05_完整初稿.md`、`report_meta.json`（含 `[待模型填入]` 占位） |
 | **Step 5 三端对账、出图、Word 渲染、红框截图与底稿** | 脚本自动化（区分草稿 `--strict` 与正式发布 `--release` 双门禁） | `chart_maker.py` → **`sync_check.py`**（`--clean-orphans --strict` 校验【期间×数值】与正文表格零错位；正式出稿加 `--release` 再验审稿哈希与零占位符）→ `render_docx.py` → **`verify_docx.py`**（12 项 XML + 摘要字数 + 占位符检验，异常直接非零退出）→ `auto_evidence_capture.py` → **`build_workpaper.py`**（草稿 `--strict` 拦红线，正式出稿 `--release` 拦一切缺图与裸域名） | `<公司名>_深度报告.docx`、`<公司名>_工作底稿.xlsx` |
 
 > **单一真源（SSOT）防规范漂移原则**：文风与质控红线只维护在 `style_guide.md`；Word 样式映射只维护在 `report_template_spec.md`；底稿门禁只维护在 `workpaper_spec.md`；流程编排只维护在 `workflow_sop.md`；`quality_fix_log.md` 仅作实战排错档案，不作为重复指令喂给 Subagent。
