@@ -22,6 +22,7 @@ import io
 import json
 import os
 import random
+import shutil
 import socket
 import struct
 import subprocess
@@ -590,6 +591,8 @@ def capture_web_with_dom_redbox(
 
         if not info.get("ok"):
             return False, final_url, f"页面未命中必需数字 {info.get('missing')}（已拒绝凑图）"
+        if int(info.get("matchedCount", 0)) == 0:
+            return False, final_url, "页面虽含目标数字但未能定位 DOM 红框元素（已拒绝输出无红框图）"
 
         # 滚完后等待 0.6s 确保重绘完成再截屏
         time.sleep(0.6)
@@ -628,6 +631,8 @@ def capture_web_with_dom_redbox(
                 proc.kill()
             except Exception:
                 pass
+        # 清理 Chrome 临时用户目录，防止批量截屏在系统临时盘残留垃圾文件夹
+        shutil.rmtree(user_dir, ignore_errors=True)
 
 
 def render_notice_text_card(
@@ -780,7 +785,8 @@ def run_manifest_capture(
                     page_num = sp.get("page_num")
                     if page_num is None:
                         must_all = list(sp.get("must_all") or must_contain)
-                        page_num = find_verified_pdf_page(pdf_path, must_all)
+                        hits = find_verified_pdf_page(pdf_path, must_all)
+                        page_num = hits[0] if hits else None
                     if not page_num:
                         fail_cnt += 1
                         print(f"  [FAIL] {item_label[:26]} -> PDF 未找到同时命中 {sp.get('must_all') or must_contain} 的页面")

@@ -108,7 +108,7 @@ def build_antigravity_opus_brief(
     """生成给 Antigravity 内置 Claude Opus 5.5 的精简高效红队审稿任务包。"""
     return f"""# Step 3.5 国金深度报告——Antigravity 原生 Claude Opus 5.5 独立审稿任务包
 
-> **执行模型**：Antigravity 内置 **Claude Opus 5.5**（`claude-opus-5-5-medium` / `claude-opus-5-5-high`，零历史独立上下文，禁用外部 Claude Code CLI）。
+> **执行模型**：首选 Antigravity 内置 **Claude Opus 5.5**（`claude-opus-5-5-medium` / `high`），配额紧张时可切内置 `Claude Sonnet 5.5 (High)` / 零历史 `Gemini 4 (High)` 或外部 ChatGPT 复审回填（零历史独立上下文，禁用外部 Claude Code CLI）。
 > **待审稿件指纹（`draft_sha256`）**：`{draft_sha}`
 
 ## 你的身份、方式与边界
@@ -134,11 +134,11 @@ def build_antigravity_opus_brief(
 5. **措辞克制与推理合理性**：针对尚未批量交付的前瞻业务，是否存在过度确定或偏宣传化表述？从行业景气到公司盈利兑现的逻辑是否存在明显跳步？
 
 ## 输出与版本绑定硬要求
-将结构化审稿意见写入同目录 `05_红队审稿意见_Claude.md`，**文件前 6 行必须包含如下机器可读头信息（供 sync_check.py 自动核对版本一致性）**：
+将结构化审稿意见写入同目录 `05_红队审稿意见.md`（兼容历史文件名 `05_红队审稿意见_Claude.md`），**文件前 6 行必须包含如下机器可读头信息（供 sync_check.py 自动核对版本一致性）**：
 ```markdown
 <!-- REVIEW_META
 draft_sha256: {draft_sha}
-reviewer_model: claude-opus-5-5
+reviewer_model: claude-opus-5-5 | claude-sonnet-5-5 | gemini-4 | chatgpt
 verdict: PASS | CONDITIONAL_PASS | REJECT
 -->
 ```

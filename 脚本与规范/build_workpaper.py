@@ -338,17 +338,18 @@ def audit_manifest(manifest: Dict[str, Any], base_dir: str) -> Dict[str, Any]:
             raw_data = item.get("raw_data", []) or []
             shot_entries = extract_shot_entries(item)
 
-            # ---- 门禁 1：黑名单来源硬拦截 ----
+            # ---- 门禁 1：黑名单来源硬拦截（忽略英文大小写，防 morgan stanley 漏网） ----
             cap_concat = " ".join(str(se.get("caption", "")) for se in shot_entries)
             combined = f"{src_name} {src_url} {cap_concat}"
+            combined_low = combined.lower()
             for bad in BLACKLIST_SOURCES:
-                if bad in combined:
+                if bad.lower() in combined_low:
                     red_errors.append(
                         f"🔴 [门禁1·黑名单来源] Sheet「{sname}」{label} -> 命中禁用词「{bad}」（来源：{src_name}）"
                     )
 
-            # 数据库来源免截图豁免
-            if is_database_source(src_name) and not shot_entries:
+            # 数据库来源免截图豁免（支持显式 is_database_exempt=true 或自动识别 iFinD/Wind 等关键词）
+            if (item.get("is_database_exempt") or is_database_source(src_name)) and not shot_entries:
                 stats["db_exempt"] += 1
                 continue
 
@@ -693,7 +694,7 @@ def build_workbook(
                     ws.add_image(xl_shot, f"J{r_cursor}")
                     r_cursor += max(10, int(xl_shot.height / 18) + 2)
                 right_end_row = r_cursor
-            elif is_database_source(src_name):
+            elif item.get("is_database_exempt") or is_database_source(src_name):
                 ws.merge_cells(start_row=cur_row + 2, start_column=10, end_row=cur_row + 2, end_column=16)
                 ws.cell(cur_row + 2, 10, "【数据库导出数据：左侧已列示导出基础数据与来源名称，合规免截图】").font = FONT_NORMAL
             else:
@@ -756,7 +757,11 @@ def print_audit_report(report: Dict[str, Any]) -> None:
 
 def main() -> None:
     """命令行入口：执行六道质控门禁校验，并生成高清正式工作底稿 Excel。"""
-    default_tpl = r"D:\深度报告\模板资产\国金研报工作底稿模板.xlsx"
+    default_tpl = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "模板资产",
+        "国金研报工作底稿模板.xlsx",
+    )
     parser = argparse.ArgumentParser(description="国金证券合规工作底稿 Excel 自动生成与六道质控门禁脚本")
     parser.add_argument("--manifest", required=True, help="06_证据清单.json 文件路径")
     parser.add_argument("--out", default="", help="输出工作底稿 (.xlsx) 路径（--audit-only 时可不传）")

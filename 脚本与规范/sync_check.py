@@ -618,7 +618,7 @@ def run_sync_check(
         if release:
             reds.append(f"🔴 [正式发布阻断·模型未填] {msg}")
         else:
-            yellows.append(f"🟡 [草稿态·模型占位] {msg}（填数后须过 --release）")
+            yellows.append(f"🟡 [AI交付态·模型占位] {msg}（待研究员在 Word 中自行刷模型填入；若回填进 Markdown 可选跑 --release）")
 
     cur_sha = compute_draft_sha256(md_text, meta_text)
     rev_blocker, rev_msg = check_redteam_review_binding(company_dir, cur_sha)

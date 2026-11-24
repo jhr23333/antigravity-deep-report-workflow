@@ -3,17 +3,19 @@
 国金证券深度报告 Word 成品全自动格式体检脚本 (verify_docx.py)
 
 功能说明：
-每次运行 render_docx.py 生成 Word 成品后，自动执行以下 10 项底层 XML 与质控硬核验收：
+每次运行 render_docx.py 生成 Word 成品后，自动执行 12 项底层 XML 与占位符硬核验收（加 --visual 可附加 Word COM 真实分页抽检）：
 1. 首页主标题字体：思源黑体 CN Heavy / 18pt / 加粗 / #004A70；
 2. 首页摘要小标题与正文样式：原生 SummaryTitle + SummaryContentNoFirLinIndent（零首行缩进）；
-3. 双硬换页符完整性：图表目录后换页起第一章 + 第五章风险提示后换页起附录三表；
+3. 双硬换页符完整性：图表目录后换页起第一章 + 末章风险提示后换页起附录三表；
 4. 图表标题原生样式保护：无手动重复编号，且未错误覆盖 bold=False；
 5. 缺失图片检查：[待补充图片...] 为 0；
 6. 图表容器宽度与深蓝横线：常规单图走 OneFullText（8192 dxa + tblInd=2551），宽图走 OneFullPage（10743 dxa），全部带 #004870 上下横线；
-7. 数据表格字体：所有新增数据表统一楷体 9pt；
+7. 数据表格字体与对齐：所有新增数据表统一楷体 9pt 且全部单元格水平居中；
 8. 来源红线：零“公开行业资料 / 产业链公开拆解 / 公开行业资讯”等空泛来源词；
-9. 第 1–3 章连续纯文字段：0 处；
-10. 第 1–3 章真实段落字数统计（200–300 字目标区间）。
+9. 核心业务与行业章节连续纯文字段：0 处（自动适配任意章节总数，仅跳过盈利预测/估值/风险提示章节，并支持 --allow-consec-text 特殊豁免）；
+10. 核心正文章节真实段落字数统计（200–300 字目标区间，不超过 350 字）；
+11. 首页摘要正文总字数护栏（≤ 850 字安全，> 900 字阻断）；
+12. 全文未完成占位符扫描（[待模型填入] 等：默认标黄供研究员自刷模型，--release 模式阻断）。
 
 命令行用法：
     D:\\anaconda3\\python.exe verify_docx.py --docx "D:\\深度报告\\超颖电子\\超颖电子_深度报告.docx"
@@ -151,8 +153,8 @@ def verify_docx(docx_path: str, release: bool = False, allow_consec_text: bool =
                             if run.font.name != "楷体" or sz != 9.0:
                                 data_table_kaiti_bad += 1
 
-    # 9 & 10. 第 1–3 章连续纯文字检查
-    in_ch1_3 = False
+    # 9 & 10. 核心业务/行业章节连续纯文字检查（自动适配任意章节数：跳过盈利预测/估值/风险提示章节）
+    in_core_ch = False
     prev_was_para = False
     consec_paras = []
     para_lens = []
@@ -165,11 +167,11 @@ def verify_docx(docx_path: str, release: bool = False, allow_consec_text: bool =
             pStyle = pPr.find(qn("w:pStyle")) if pPr is not None else None
             sid = pStyle.get(qn("w:val")) if pStyle is not None else ""
             if sid == "ContentFirTitle":
-                in_ch1_3 = txt.startswith(("一、", "二、", "三、"))
+                in_core_ch = not any(k in txt for k in ("盈利预测", "估值", "投资建议", "风险提示"))
                 prev_was_para = False
             elif sid == "ContentSecTitle":
                 prev_was_para = False
-            elif sid == "ContentContentNoFirLinIndent" and in_ch1_3 and txt:
+            elif sid == "ContentContentNoFirLinIndent" and in_core_ch and txt:
                 para_lens.append(len(txt))
                 if prev_was_para:
                     consec_paras.append(txt[:28])

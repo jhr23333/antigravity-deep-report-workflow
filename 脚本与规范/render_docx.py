@@ -707,7 +707,11 @@ def render_report(
 
 def main() -> None:
     """命令行入口。"""
-    default_tpl = r"D:\深度报告\模板资产\国金证券_公司深度研究模板.docx"
+    default_tpl = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "模板资产",
+        "国金证券_公司深度研究模板.docx",
+    )
     parser = argparse.ArgumentParser(description="国金证券深度报告 Word 模板渲染脚本")
     parser.add_argument("--md", required=True, help="完整初稿 Markdown 路径")
     parser.add_argument("--out", required=True, help="输出 Word (.docx) 路径")
