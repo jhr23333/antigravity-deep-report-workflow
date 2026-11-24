@@ -317,11 +317,63 @@ def audit_prose_numbers(
     return findings
 
 
+def audit_qualitative_claims(
+    md_text: str,
+    manifest_data: Dict[str, Any],
+) -> List[Dict[str, str]]:
+    """
+    正文高敏定性判断（“狠话”）底稿覆盖扫描：
+    扫描正文中包含“第一/唯一/龙头/领先/率先/独家/核心供应链/批量供货/核心供应商”等高敏定性词的句子；
+    若该句对应核心关键词未在 06_证据清单.json（含 type='text'、图表标题、raw_data）中建档，
+    则列为 🟡 待核查项写入 09_对账与质检报告.md（提醒：无公开出处就删改收敛，有出处就补独立底稿）。
+    """
+    qual_re = re.compile(r"(全球第一|国内第一|行业第一|稳居第一|唯一|独家|率先量产|率先突破|核心供应链|批量供货|核心供应商|国际领先|国内领先)")
+    manifest_blob = json.dumps(manifest_data, ensure_ascii=False)
+
+    findings: List[Dict[str, str]] = []
+    cur_sec = "前言/未分节"
+    in_comment = False
+    for lineno, raw_ln in enumerate(md_text.splitlines(), 1):
+        s = raw_ln.strip()
+        if "<!--" in s:
+            in_comment = True
+        if in_comment:
+            if "-->" in s:
+                in_comment = False
+            continue
+        if not s or s.startswith("|") or s.startswith("![") or s.startswith(">"):
+            continue
+        if s.startswith("#"):
+            cur_sec = s.lstrip("#").strip()[:36]
+            continue
+
+        # 按中文句号/分号拆句，精准定位含高敏词的完整句子
+        for sent in re.split(r"[。；;]", s):
+            sent = sent.strip()
+            if not sent:
+                continue
+            m = qual_re.search(sent)
+            if not m:
+                continue
+            kw = m.group(1)
+            # 若该高敏词已在底稿清单中出现过对应证据描述，视为已建档（仍可在人工抽查时复核）
+            if kw in manifest_blob:
+                continue
+            findings.append({
+                "line": str(lineno),
+                "section": cur_sec,
+                "keyword": kw,
+                "sentence": sent[:90].replace("|", "/"),
+            })
+    return findings
+
+
 def write_qc_report(
     company_dir: str,
     reds: List[str],
     yellows: List[str],
     prose_findings: List[Dict[str, str]],
+    qual_findings: List[Dict[str, str]],
     summary_line: str,
     release: bool,
 ) -> str:
@@ -371,6 +423,23 @@ def write_qc_report(
         ])
         for pf in prose_findings:
             lines.append(f"| L{pf['line']} | {pf['section']} | `{pf['metric']}` | {pf['snippet']} |")
+
+    lines.extend([
+        "",
+        "## 四、🟡 正文高敏定性判断（“狠话”）底稿核查清单",
+        "",
+        "> 原则：**无公开出处的定性狠话直接删改收敛；确有公开一手出处的硬判断，必须补建 `type: \"text\"` 底稿条目并整句画红框。**",
+        "",
+    ])
+    if not qual_findings:
+        lines.append("- 未发现未入底稿的高敏定性狠话（0 处）。")
+    else:
+        lines.extend([
+            "| 行号 | 所在章节 | 命中高敏词 | 原文完整句子 |",
+            "|---:|---|---|---|",
+        ])
+        for qf in qual_findings:
+            lines.append(f"| L{qf['line']} | {qf['section']} | `{qf['keyword']}` | {qf['sentence']} |")
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
@@ -523,6 +592,12 @@ def run_sync_check(
             f"🟡 [正文段落未锚定小数] 发现 {len(prose_findings)} 处正文带单位小数未出现在底稿/财报快照中（已带行号写入 09_对账与质检报告.md 供抽核）"
         )
 
+    qual_findings = audit_qualitative_claims(md_text, manifest_data)
+    if qual_findings:
+        yellows.append(
+            f"🟡 [定性狠话未建底稿] 发现 {len(qual_findings)} 处高敏定性表述未在底稿清单命中（无出处请删改收敛，有出处请补 type='text' 底稿，详见 09_对账与质检报告.md）"
+        )
+
     # 6. 首页摘要字数、模型占位符、红队审稿版本哈希核查
     if meta_text:
         meta = json.loads(meta_text)
@@ -562,7 +637,7 @@ def run_sync_check(
         f"正文未锚定小数 {len(prose_findings)} 处 | 占位符 {ph_cnt} 处"
     )
     print(f"[SUMMARY] {summary_line}")
-    qc_path = write_qc_report(company_dir, reds, yellows, prose_findings, summary_line, release)
+    qc_path = write_qc_report(company_dir, reds, yellows, prose_findings, qual_findings, summary_line, release)
     print(f"[REPORT] 已生成可视化质检清单 -> {qc_path}")
     return reds, yellows
 

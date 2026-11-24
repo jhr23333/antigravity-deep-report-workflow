@@ -181,6 +181,65 @@ def find_verified_pdf_page(
     return hits
 
 
+def _expand_rects_to_sentence_lines(page: fitz.Page, hit_rects: List[fitz.Rect]) -> List[fitz.Rect]:
+    """
+    将关键词的局部命中小框扩展为“完整句子/整行表格”的红框范围：
+    - 同行（垂直重叠）的所有文本段横向合并，确保表格直接框住整行（含科目名+全部数值）；
+    - 正文段落中若命中行未以句号/分号开头或结尾，自动向相邻行顺延 1 行以尽量囊括完整句子，
+      避免只框出一个孤立词或数字让质控无法直接看清语境。
+    """
+    if not hit_rects:
+        return []
+    text_dict = page.get_text("dict")
+    all_lines: List[Tuple[fitz.Rect, str, int]] = []
+    for b_idx, blk in enumerate(text_dict.get("blocks", [])):
+        if blk.get("type") != 0:
+            continue
+        for ln in blk.get("lines", []):
+            lr = fitz.Rect(ln["bbox"])
+            ltxt = "".join(sp.get("text", "") for sp in ln.get("spans", "")).strip()
+            if ltxt:
+                all_lines.append((lr, ltxt, b_idx))
+
+    if not all_lines:
+        return hit_rects
+
+    expanded: List[fitz.Rect] = []
+    for hr in hit_rects:
+        matched_indices: List[int] = []
+        for idx, (lr, _, _) in enumerate(all_lines):
+            # 垂直重叠超过行高 30% 即视为同一行（同时覆盖正文整行与表格同行所有列）
+            ov = min(hr.y1, lr.y1) - max(hr.y0, lr.y0)
+            min_h = max(1.0, min(hr.height, lr.height))
+            if ov >= 0.3 * min_h:
+                matched_indices.append(idx)
+
+        if not matched_indices:
+            expanded.append(hr)
+            continue
+
+        # 若命中处于同一正文段落块且句子跨行，则顺延纳入紧邻的同段续行（最多前后各 1 行）
+        chosen = set(matched_indices)
+        first_i, last_i = min(matched_indices), max(matched_indices)
+        blk_id = all_lines[first_i][2]
+        # 仅当同一水平行只有 1 个文本块（正文段落而非多列表格）时做前后句顺延
+        if len(matched_indices) == 1:
+            cur_txt = all_lines[first_i][1]
+            if first_i > 0 and all_lines[first_i - 1][2] == blk_id:
+                prev_txt = all_lines[first_i - 1][1]
+                if prev_txt and prev_txt[-1] not in "。！？；：.!?;:":
+                    chosen.add(first_i - 1)
+            if last_i + 1 < len(all_lines) and all_lines[last_i + 1][2] == blk_id:
+                if cur_txt and cur_txt[-1] not in "。！？；.!?;":
+                    chosen.add(last_i + 1)
+
+        union_r = fitz.Rect(all_lines[min(chosen)][0])
+        for ci in chosen:
+            union_r |= all_lines[ci][0]
+        expanded.append(union_r)
+    return expanded
+
+
 def capture_pdf_with_redbox(
     pdf_path: str,
     page_num: int,
@@ -193,6 +252,7 @@ def capture_pdf_with_redbox(
     crop_y_range: Optional[Tuple[float, float]] = None,
     require_redbox: bool = True,
     exclude_context: Optional[Dict[str, List[str]]] = None,
+    expand_to_sentence: bool = True,
 ) -> bool:
     """
     从正式 PDF 指定页（1-indexed）截取高清图片，并在关键词所在原文处自动画红框。
@@ -243,6 +303,10 @@ def capture_pdf_with_redbox(
     for kw in keywords:
         if kw:
             rects.extend(page.search_for(kw))
+
+    # 默认把关键词局部小框扩展为“完整句子/整行表格”红框，确保质控直接看清完整语境
+    if rects and expand_to_sentence:
+        rects = _expand_rects_to_sentence_lines(page, rects)
 
     shape = page.new_shape()
     drawn_boxes = 0
