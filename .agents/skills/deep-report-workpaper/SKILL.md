@@ -16,7 +16,7 @@ description: 深度报告 Step 5B 合规工作底稿自动红框截图（PDF防�
 
 1. **常规财务/行情走 iFinD（免截图）**：公司历史营收/净利/毛利率/股价/估值等常规数据库指标，在 `06_证据清单.json` 中标明 `is_database_exempt: true`（来源写 `同花顺iFinD`），免贴原件截图。
 2. **非标准业务细节与行业数据必须贴高清红框原件图**：
-   - PDF 原件（年报/季报/招股书/行业白皮书）：必须用 `auto_evidence_capture.py` 的 `find_verified_pdf_page` + `capture_pdf_evidence(..., require_redbox=True)` 截取，内置 `DEFAULT_AMBIGUOUS_CONTEXTS` 防错页，自动生成 `<图片>.meta.json` 溯源元数据（记录 `box_count`、`page_text_norm`、`verified_tokens`）。
+   - PDF 原件（年报/季报/招股书/行业白皮书）：必须用 `auto_evidence_capture.py` 的 `find_verified_pdf_page` + `capture_pdf_with_redbox(..., require_redbox=True, expand_to_sentence=True)` 截取，内置 `DEFAULT_AMBIGUOUS_CONTEXTS` 防错页并自动将红框扩展至完整句子/表格整行，同时生成 `<图片>.meta.json` 溯源元数据（记录 `box_count`、`page_text_norm`、`verified_tokens`）。
    - 公开网页（TrendForce/IDC/中汽协/公司官网新闻稿等）：必须用 `auto_evidence_capture.py` 的 Chrome CDP 模式在 DOM 标红后整段截屏并写 `.meta.json`。
    - **严禁**：无红框空白图、裸根域名网址（如 `https://www.prismark.com`）、多文档/多机构只截单张图、引用友商卖方研报（高盛/大摩/中信/中金/华泰等）或非白名单论坛/自媒体。
 3. **无公开原件的付费报告（如 Prismark 完整版）**：诚实留空 `evidence_screenshot` 并在 `missing_reason` 注明，严禁拿无关网页滥竽充数。

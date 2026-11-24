@@ -26,7 +26,7 @@ D:\深度报告\
 ├─ AGENTS.md                            # Antigravity / Codex 工作区总入口规则（指向 .agents/skills/）
 ├─ README.md                            # 本总览说明（运行原理 + 命令 + 修改入口）
 ├─ .agents\skills\                      # 打包好的 4 个模块化工作流 Skill（单步或端到端均可直接触发）
-│  ├─ deep-report-run\SKILL.md          # 总控：Step 0–5 端到端完整深度报告工作流
+│  ├─ deep-report-run\SKILL.md          # 总控：Step 1–5 端到端完整深度报告工作流
 │  ├─ deep-report-review\SKILL.md       # Step 3.5：Antigravity Opus 5.5 红队审稿与终稿哈希签认
 │  ├─ deep-report-charts\SKILL.md       # Step 5A：300 DPI 制图、三端【期间×数值】对账、Word 渲染与 12 项体检
 │  └─ deep-report-workpaper\SKILL.md    # Step 5B：自动红框截图、.meta.json 验真与六道门禁底稿 Excel 打包
@@ -49,7 +49,7 @@ D:\深度报告\
 │  ├─ auto_evidence_capture.py          # Step 5：防歧义 PDF 找页 + Chrome CDP DOM 红框截图 + .meta.json 落盘
 │  └─ build_workpaper.py                # Step 5：正式高清底稿生成 + 六道质控门禁（--strict 零遗漏阻断）
 ├─ 参考样本\                             # 历年报告样本、质控部注意事项 PPT、团队优秀报告 PDF
-└─ <公司名>\                             # 每家新公司独立子文件夹（如 D:\深度报告\超颖电子\）
+└─ <公司名>\                             # 每家新公司独立子文件夹（00_原始资料 / 01–02 共享锚点 / 03_段落级大纲★ / 04_分节草稿 / 05_完整初稿★及审稿 / 06_证据清单 / 07_图表 / 08_底稿证据★ / 09_对账与质检报告★及视觉抽检页 / 最终 Word★与底稿 Excel★）
 ```
 
 ---

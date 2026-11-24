@@ -6,7 +6,7 @@
 
 | Skill | 触发词 | 负责阶段 |
 |---|---|---|
-| `deep-report-run` | 写深度报告 / 新建深度报告 / 跑完整深度报告流程 | 端到端总控（Step 0–5 全链串联） |
+| `deep-report-run` | 写深度报告 / 新建深度报告 / 跑完整深度报告流程 | 端到端总控（Step 1–5 全链串联） |
 | `deep-report-review` | 红队审稿 / Opus审稿 / 复审报告 / 审稿签认 | Step 3.5 Antigravity 内置 Claude Opus 5.5 审稿与 `draft_sha256` 签认 |
 | `deep-report-charts` | 画报告图表 / 三端对账 / 生成深度报告Word / 渲染docx / 发版验收 | Step 5A 300 DPI 制图、三端【期间×数值】与正文表格对账、Word 渲染与 12 项体检 |
 | `deep-report-workpaper` | 做工作底稿 / 生成底稿 / 底稿截图 / 底稿合规检查 | Step 5B 防歧义 PDF/网页红框截图、`.meta.json` 验真与六道门禁 Excel 打包 |
