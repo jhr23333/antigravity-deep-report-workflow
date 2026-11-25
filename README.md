@@ -1,7 +1,7 @@
 # 卖方公司深度研究报告——跨平台半自动化工作台
 
 > **开箱即用**：兼容 **Windows / macOS / Linux（含 ChatGPT Work 云端沙盒）**，支持 **Antigravity、Codex、ChatGPT Work**。
-> 已内置官方 Word / Excel 模板、8 个自动化 Python 脚本、4 个模块化 Skill、4 份单一真源规范与 1 份跨平台配色配置。
+> 已内置官方 Word / Excel 模板、8 个自动化生产脚本 + 1 套离线回归测试、4 个模块化 Skill、4 份单一真源规范与 1 份跨平台配色配置。
 
 ---
 
@@ -51,7 +51,7 @@
 ├─ 模板资产/                             # 官方只读模板（脚本自动按相对路径读取）
 │  ├─ 国金证券_公司深度研究模板.docx
 │  └─ 国金研报工作底稿模板.xlsx
-└─ 脚本与规范/                           # 4 份单一真源规范 + 1 份跨平台配色 + 8 个自动化脚本
+└─ 脚本与规范/                           # 4 份单一真源规范 + 1 份跨平台配色 + 8 个生产脚本 + 1 套回归测试
    ├─ style_guide.md                    # 【SSOT】质控红线 + 12 条正文细则 + 永久双红线 + 卖方语体
    ├─ report_template_spec.md           # 【SSOT】Markdown -> Word XML 样式映射
    ├─ workpaper_spec.md                 # 【SSOT】工作底稿规范 + 四级梯队 + 门禁 2B + 六道门禁
@@ -61,10 +61,11 @@
    ├─ redteam_review.py                 # Step 3.5：文风/口径预扫描 + 导出带 draft_sha256 的审稿任务包
    ├─ chart_maker.py                    # Step 5：9 种标准图表批量生成 + 饼图防重叠 + 像素重叠检测
    ├─ sync_check.py                     # Step 5：防缩水 + 标题年份 + 有序对账 + 落盘 09_对账与质检报告.md
-   ├─ render_docx.py                    # Step 5：渲染进官方 Word 模板（防跨页断裂）
+   ├─ render_docx.py                    # Step 5：渲染进官方 Word 模板（含标题/斜体/加粗/AI 味体检）
    ├─ verify_docx.py                    # Step 5：12 项 XML 体检 + 跨平台 PDF 真实分页抽检（--visual）
    ├─ auto_evidence_capture.py          # Step 5：一键 --manifest 批量 PDF 整句红框 + 网页 CDP 红框 + 留痕
-   └─ build_workpaper.py                # Step 5：正式高清底稿打包 + 门禁 2B 与六道门禁（--strict / --release）
+   ├─ build_workpaper.py                # Step 5：正式高清底稿打包 + 门禁 2B 与六道门禁（--strict / --release）
+   └─ test_workflow_regression.py       # 维护回归测试：一键端到端校验 10 组跨脚本契约与规范防回退
 ```
 
 ---
@@ -102,4 +103,7 @@ python 脚本与规范/build_workpaper.py --manifest 示例公司/06_证据清�
 python 脚本与规范/sync_check.py --dir 示例公司 --release
 python 脚本与规范/verify_docx.py --docx 示例公司/示例公司_深度报告.docx --release --visual
 python 脚本与规范/build_workpaper.py --manifest 示例公司/06_证据清单.json --audit-only --release
+
+# 【维护验收】修改任意脚本或规范后，一键运行全链路离线回归测试：
+python 脚本与规范/test_workflow_regression.py
 ```
