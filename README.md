@@ -1,7 +1,7 @@
 # 卖方公司深度研究报告——跨平台半自动化工作台
 
 > **开箱即用**：兼容 **Windows / macOS / Linux（含 ChatGPT Work 云端沙盒）**，支持 **Antigravity、Codex、ChatGPT Work**。
-> 已内置官方 Word / Excel 模板、8 个自动化生产脚本 + 1 套离线回归测试、4 个模块化 Skill、4 份单一真源规范与 1 份跨平台配色配置。
+> 已内置官方 Word / Excel 模板、9 个自动化生产脚本（含免账号巨潮/SEC 公开数据抓取兜底）+ 1 套离线回归测试、4 个模块化 Skill、4 份单一真源规范与 1 份跨平台配色配置。
 
 ---
 
@@ -14,7 +14,14 @@
 2. **务必开一个全新对话启动**（避免旧对话的旧版预测、旧图表污染上下文），并把本目录作为当前工作目录。
 3. **直接触发总控 Skill**：
    > `按 .agents/skills/deep-report-run/SKILL.md 的完整流程，为 <公司名>（<股票代码>）撰写公司深度研究报告，财务数据源优先用 <iFinD / Choice / Wind / 公开财报>。`
-4. **核心避坑**：
+4. **没有 iFinD 怎么办？（30 秒替代取数指南 — 本仓库零强依赖 iFinD）**：
+   - **路径 A（你已有 Choice / Wind / Bloomberg 等任意金融终端或连接器）**：直接按第 3 步提示词指定你的终端，底稿与红队脚本已原生免截图兼容 `Choice / Wind / Bloomberg`；
+   - **路径 B（完全没有付费终端 — 一键免账号兜底抓取）**：运行本仓库内置的 `脚本与规范/fetch_public_data.py`（纯 Python 标准库零依赖）：
+     - **A 股**：自动直连**巨潮资讯网**拉近 90 天全部临时公告 + 最新年报/季报 PDF 直链（加 `--download-reports` 自动下载 PDF 供 `pull_company_data.py` 精确抽数）；可选装 `akshare` 补充财务速览；
+     - **美股**：自动直连 **SEC EDGAR** 拉近 90 天全部申报清单（20-F/10-K/10-Q/6-K/8-K）与官方 XBRL 财报；可选装 `yfinance` 补充行情；
+     - *质控提醒*：巨潮 PDF / SEC 文件为官方一手出处可直接作底稿截图源；`akshare` / `yfinance` 仅用于初稿速览，正式底稿须回落到官方 PDF 或付费终端复核。
+   - **路径 C（受限云沙盒无法直连外网 API 时）**：只需手工把 2–3 份官方 PDF（最新年报 + 最新季报/20-F + 近 90 天重大公告）和一份同业财务对比表放进 `<公司名>/00_原始资料/pdfs/`，Step 2–5 全部自动化脚本 100% 照常跑通。
+5. **核心避坑**：
    - 大纲阶段（Step 2）会停下来等你确认章节与图表清单，拍板后再动笔；
    - 即使在没有多 Agent 并发的单对话框客户端（如 ChatGPT Work），也必须逐节写入 `04_分节草稿/` 并实跑 `chart_maker.py` / `sync_check.py` / `render_docx.py` / `build_workpaper.py`，**绝不允许单回合压缩成 8–9 页简报**；
    - 盈利预测、PE、目标价与评级默认保留 `[待模型填入]`，拿到最终 Word 后由你自行刷模型填入。
@@ -51,12 +58,13 @@
 ├─ 模板资产/                             # 官方只读模板（脚本自动按相对路径读取）
 │  ├─ 国金证券_公司深度研究模板.docx
 │  └─ 国金研报工作底稿模板.xlsx
-└─ 脚本与规范/                           # 4 份单一真源规范 + 1 份跨平台配色 + 8 个生产脚本 + 1 套回归测试
+└─ 脚本与规范/                           # 4 份单一真源规范 + 1 份跨平台配色 + 9 个生产脚本 + 1 套回归测试
    ├─ style_guide.md                    # 【SSOT】质控红线 + 12 条正文细则 + 永久双红线 + 卖方语体
    ├─ report_template_spec.md           # 【SSOT】Markdown -> Word XML 样式映射
    ├─ workpaper_spec.md                 # 【SSOT】工作底稿规范 + 四级梯队 + 门禁 2B + 六道门禁
    ├─ workflow_sop.md                   # 【SSOT】6 步协作流程 + 00–09 目录速查 + 共享锚点模板
    ├─ chart_theme.json                  # 【SSOT】国金黑蓝灰无网格线配色（兼容 Win/Mac/Linux 中文字体）
+   ├─ fetch_public_data.py              # Step 1（无 iFinD 兜底）：免账号拉巨潮近 90 天公告/PDF + SEC EDGAR + 可选 AkShare/yfinance
    ├─ pull_company_data.py              # Step 1（A股可选）：合并三大表精确快照（含广义现金，剔除财务费用率）
    ├─ redteam_review.py                 # Step 3.5：文风/口径预扫描 + 导出带 draft_sha256 的审稿任务包
    ├─ chart_maker.py                    # Step 5：9 种标准图表批量生成 + 饼图防重叠 + 像素重叠检测
@@ -73,6 +81,12 @@
 ## 四、标准一键命令（在根目录直接运行，无需改盘符）
 
 ```bash
+# Step 1-0（无 iFinD/Choice 时可选兜底）：免账号拉近 90 天全量公告与公开财报
+# A 股（可加 --download-reports 示例公司/00_原始资料/pdfs 自动下最新年报与季报 PDF）：
+python 脚本与规范/fetch_public_data.py --code 600584.SH --out 示例公司/00_原始资料/00_公开公告与财务速览.md
+# 美股（直连 SEC EDGAR 官方申报清单与 XBRL 财报）：
+python 脚本与规范/fetch_public_data.py --code ATAT --market us --out 亚朵集团/00_原始资料/00_公开公告与财务速览.md
+
 # Step 1（A股可选）：从最新季报/年报 PDF 精确提取合并三大表快照
 python 脚本与规范/pull_company_data.py \
   --name 示例公司 --code 600000.SH \

@@ -68,6 +68,7 @@ class DeepReportWorkflowRegressionTests(unittest.TestCase):
         "脚本与规范/workpaper_spec.md",
         "脚本与规范/report_template_spec.md",
         "脚本与规范/chart_theme.json",
+        "脚本与规范/fetch_public_data.py",
         "脚本与规范/pull_company_data.py",
         "脚本与规范/auto_evidence_capture.py",
         "脚本与规范/chart_maker.py",
@@ -489,6 +490,55 @@ class DeepReportWorkflowRegressionTests(unittest.TestCase):
             r_c4 = run_repo_script("脚本与规范/verify_docx.py", ["--docx", out_c4])
             self.assertEqual(r_c4.returncode, 1)
             self.assertIn("核心业务与行业章节连续纯文字段 1 处", r_c4.stdout)
+
+    def test_11_fetch_public_data_offline_parsers_and_compliance(self) -> None:
+        """离线校验 fetch_public_data.py 市场识别、SEC 解析、XBRL 提取与合规声明输出。"""
+        sys.path.insert(0, SCRIPT_DIR)
+        import fetch_public_data as fpd
+
+        self.assertEqual(fpd.detect_market("600584.SH"), "a")
+        self.assertEqual(fpd.detect_market("002475"), "a")
+        self.assertEqual(fpd.detect_market("0700.HK"), "hk")
+        self.assertEqual(fpd.detect_market("ATAT"), "us")
+        self.assertEqual(fpd.normalize_a_code("600584.SH"), "600584")
+        self.assertEqual(fpd.cninfo_column_for_code("600584"), "sse")
+        self.assertEqual(fpd.cninfo_column_for_code("002475"), "szse")
+        self.assertEqual(fpd.cninfo_column_for_code("830001"), "third")
+
+        # 验证 SEC submissions 与 XBRL 离线解析
+        import datetime as _dt
+        today_s = _dt.date.today().isoformat()
+        fake_sub = {
+            "filings": {
+                "recent": {
+                    "form": ["6-K", "20-F"],
+                    "filingDate": [today_s, "2025-04-20"],
+                    "accessionNumber": ["0001193125-26-000001", "0001193125-25-000002"],
+                    "primaryDocument": ["d6k.htm", "d20f.htm"],
+                    "primaryDocDescription": ["6-K Earnings", "Annual Report"],
+                }
+            }
+        }
+        recent_all, major = fpd.parse_sec_submissions(fake_sub, "0001853717", days=90)
+        self.assertEqual(len(recent_all), 1)
+        self.assertIn("1853717/000119312526000001/d6k.htm", recent_all[0]["url"])
+        self.assertEqual(len(major), 2)
+
+        fake_facts = {
+            "facts": {
+                "us-gaap": {
+                    "Revenues": {"units": {"CNY": [{"form": "20-F", "fp": "FY", "fy": 2025, "val": 9790000000}]}},
+                    "NetIncomeLoss": {"units": {"CNY": [{"form": "20-F", "fp": "FY", "fy": 2025, "val": 1620000000}]}},
+                }
+            }
+        }
+        xbrl_md = fpd.extract_sec_xbrl_highlights(fake_facts)
+        self.assertIn("FY2025", xbrl_md)
+        self.assertIn("9,790.00", xbrl_md)
+        self.assertIn("1,620.00", xbrl_md)
+
+        md = fpd.build_output_markdown("测试公司", "600584.SH", "a", 90, [("一、测试", "内容")])
+        self.assertIn("严禁在工作底稿中免截图使用", md)
 
 
 if __name__ == "__main__":

@@ -4,3 +4,7 @@ openpyxl
 Pillow
 PyMuPDF
 python-docx
+
+# 以下为可选免费行情/财务扩展依赖（fetch_public_data.py 的巨潮 A 股公告与 SEC EDGAR 美股功能纯标准库零依赖，无需安装即可运行）：
+# akshare
+# yfinance
