@@ -1,64 +1,60 @@
 ---
 name: deep-report-charts
-description: 深度报告 Step 5A 制图、三端【期间×数值】有序对账、Markdown表格核验、Word 渲染与 12 项 XML 体检。支持 --strict 草稿门禁与 --release 正式发布门禁。当用户说“画报告图表”“三端对账”“生成深度报告Word”“渲染docx”“发版验收”或“/deep-report-charts”时触发。
+description: 深度报告 Step 5A 制图、防缩水与三端【期间×数值】有序对账、Markdown表格核验、官方模板 Word 渲染与 12 项 XML + 跨平台真实分页体检。当用户说“画报告图表”“三端对账”“生成深度报告Word”“渲染docx”或“/deep-report-charts”时触发。
 ---
 
-# 深度报告制图、三端对账与 Word 渲染验收
+# 深度报告制图、三端对账与 Word 渲染验收（跨平台通用版）
 
-本 Skill 负责把结构化数据与初稿渲染为符合国金证券官方视觉规范的 300 DPI 图表与 `.docx` 报告，并用确定性脚本拦死三端数据漂移与排版缺陷。
+本 Skill 负责把结构化数据与初稿渲染为 300 DPI 标准图表与国金官方模板 `.docx` 报告，并用确定性脚本拦死图表缩水、三端漂移与排版缺陷。**严禁绕过 `render_docx.py` 手搓无模板 Word。**
 
-## 规范真源
+## 规范与模板真源（相对路径）
 
-- 图表视觉配色（黑蓝灰、无网格线、300 DPI）：`D:\深度报告\脚本与规范\chart_theme.json`
-- Word 样式映射与单图缩进规范：`D:\深度报告\脚本与规范\report_template_spec.md`
-- 官方 Word 模板：`D:\深度报告\模板资产\国金证券_公司深度研究模板.docx`
+- 跨平台图表配色（兼容 Win/Mac/Linux 中文字体）：`脚本与规范/chart_theme.json`
+- Word 样式映射与单图缩进规范：`脚本与规范/report_template_spec.md`
+- 内置官方 Word 模板：`模板资产/国金证券_公司深度研究模板.docx`（脚本自动定位，无需传绝对路径）
 
-## 标准执行流水线
+## 标准执行流水线（在仓库根目录运行）
 
-### 1. 批量生成 300 DPI 高清图表
-```powershell
-D:\anaconda3\python.exe D:\深度报告\脚本与规范\chart_maker.py `
-  --spec D:\深度报告\{公司名}\charts.json `
-  --out-dir D:\深度报告\{公司名}\07_图表
+### 1. 批量生成 300 DPI 高清图表（含饼图自动防重叠与像素框重叠检测）
+```bash
+python 脚本与规范/chart_maker.py \
+  --spec <公司名>/charts.json \
+  --out-dir <公司名>/07_图表
 ```
 
-### 2. 三端【期间 × 数值】有序对账 + 清理孤儿旧图
-```powershell
-# 草稿阶段（允许 [待模型填入] 与未复审黄灯，拦死年份互换/表格错位/缺图）：
-D:\anaconda3\python.exe D:\深度报告\脚本与规范\sync_check.py `
-  --dir D:\深度报告\{公司名} --clean-orphans --strict
+### 2. 三端【期间 × 数值】有序对账 + 防缩水拦截 + 清理孤儿旧图
+```bash
+# 默认交付门禁（自动输出 <公司名>/09_对账与质检报告.md）：
+python 脚本与规范/sync_check.py --dir <公司名> --clean-orphans --strict
 
-# 正式发布（零容忍：占位符必须为 0、审稿 draft_sha256 必须匹配最新终稿）：
-D:\anaconda3\python.exe D:\深度报告\脚本与规范\sync_check.py `
-  --dir D:\深度报告\{公司名} --release
+# 可选零占位终验（回填模型且终稿签认完毕后）：
+python 脚本与规范/sync_check.py --dir <公司名> --release
 ```
-**对账覆盖范围**（每次运行同步落盘 `D:\深度报告\{公司名}\09_对账与质检报告.md`，集中列出所有 🔴/🟡 与精确行号）：
-- 正文 `05_完整初稿.md` ↔ `charts.json` ↔ `07_图表/` 图片完整一一对应；
-- `charts.json` ↔ `06_证据清单.json` 按 **`(期间/分类, 数值)` 有序配对**（哪怕仅互换两年数值也立即 🔴 报错），并自动核查**正文图表标题起止年份是否与 `charts.json` 实际横轴年份严格一致**（不符直接 🔴 阻断）；
-- `05_完整初稿.md` 每张 `TABLE_META` 表格 ↔ `06_证据清单.json` `type="table"` 逐行数值核对；
-- 正文纯文字段落带单位小数指标 ↔ 底稿/财报快照锚定检查、高敏定性狠话底稿覆盖扫描，以及**违规分析财务费用率与单段连续数字堆砌扫描**（均带行号写入 `09_对账与质检报告.md`）；
-- 首页摘要字数护栏（`≤ 850 字`）与红队审稿报告（兼容 Opus/Sonnet/Gemini/ChatGPT）指纹绑定检查。
+**对账覆盖范围**：
+- 防缩水门禁：成稿图表总数低于 `03_段落级大纲.md` 拟定数 75% 直接 🔴 拦截；
+- 正文 `05_完整初稿.md` ↔ `charts.json` ↔ `07_图表/` 一一对应；
+- `charts.json` ↔ `06_证据清单.json` 按 `(期间/分类, 数值)` 有序配对（年份互换必抓）；
+- `05_完整初稿.md` 每张 `TABLE_META` 表格 ↔ `06_证据清单.json` `type="table"` 逐行核对；
+- 正文纯文字带单位小数锚定检查 + 高敏定性狠话底稿覆盖扫描（均带行号写入 `09_对账与质检报告.md`）；
+- 首页摘要字数护栏（`≤ 850 字`）与审稿报告 `draft_sha256` 校验。
 
-### 3. 渲染国金官方 Word 报告（内置防图题分离 `keepNext` 与防表行腰斩 `cantSplit`）
-```powershell
-D:\anaconda3\python.exe D:\深度报告\脚本与规范\render_docx.py `
-  --md D:\深度报告\{公司名}\05_完整初稿.md `
-  --meta D:\深度报告\{公司名}\report_meta.json `
-  --out D:\深度报告\{公司名}\{公司名}_深度报告.docx
+### 3. 套用官方模板渲染 Word（内置 `keepNext / cantSplit / tblHeader` 防跨页断裂）
+```bash
+python 脚本与规范/render_docx.py \
+  --md <公司名>/05_完整初稿.md \
+  --meta <公司名>/report_meta.json \
+  --out <公司名>/<公司名>_深度报告.docx
 ```
 
-### 4. Word 12 项 XML 体检 + Word COM 真实分页视觉抽检
-```powershell
-# 草稿阶段（11 项 XML 全过即 exit 0；加 --visual 可额外导出首页及疑似异常页 PNG 到 09_视觉抽检页/）：
-D:\anaconda3\python.exe D:\深度报告\脚本与规范\verify_docx.py `
-  --docx D:\深度报告\{公司名}\{公司名}_深度报告.docx --visual
+### 4. Word 12 项 XML 体检 + 跨平台真实分页视觉抽检
+```bash
+# 默认交付体检（Windows 走 Word COM、Linux/Mac 自动走 LibreOffice 导出首页抽检 PNG）：
+python 脚本与规范/verify_docx.py --docx <公司名>/<公司名>_深度报告.docx --visual
 
-# 正式发布（12 项全检，存在任意 1 处 [待模型填入]/TBD/TODO 即 exit 1 阻断）：
-D:\anaconda3\python.exe D:\深度报告\脚本与规范\verify_docx.py `
-  --docx D:\深度报告\{公司名}\{公司名}_深度报告.docx --release --visual
+# 可选零占位终验：
+python 脚本与规范/verify_docx.py --docx <公司名>/<公司名>_深度报告.docx --release --visual
 ```
 
 ## 异常处置原则
 
-- 任何脚本返回非零退出码时，**先修源数据（`charts.json` / `05_完整初稿.md` / `06_证据清单.json`）再重跑全链**，严禁手动改 Word 后不回写 Markdown/JSON。
-- 每次修改图表后，务必带 `--clean-orphans` 重跑 `sync_check.py`，防止废弃旧图残留在 `07_图表\`。
+- 任何脚本返回非零退出码时，先修源数据（`charts.json` / `05_完整初稿.md` / `06_证据清单.json`）再重跑全链，严禁手动改 Word 后不回写源文件。

@@ -87,12 +87,22 @@ def _write_sidecar_meta(
 
 
 def _get_cn_font(size: int = 19):
-    """加载 Windows 常见中文字体（微软雅黑/黑体），用于顶部来源标注栏。"""
+    """跨平台加载中文字体（兼容 Windows / Linux 云沙盒 / macOS），用于顶部来源标注栏。"""
     for fp in (
+        # Windows
         r"C:\Windows\Fonts\msyh.ttc",
         r"C:\Windows\Fonts\msyhbd.ttc",
         r"C:\Windows\Fonts\simhei.ttf",
         r"C:\Windows\Fonts\simkai.ttf",
+        # Linux（ChatGPT Work / Ubuntu / Debian 云端容器）
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        # macOS
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
     ):
         if os.path.exists(fp):
             try:
@@ -118,10 +128,20 @@ def _add_provenance_banner(img: Image.Image, banner_text: str) -> Image.Image:
 
 
 def find_headless_browser() -> Optional[str]:
-    """查找本机已安装的 Chrome 或 Edge 浏览器路径。"""
+    """跨平台查找本机/容器已安装的 Chrome / Chromium / Edge 浏览器路径。"""
     for exe in CHROME_CANDIDATES:
         if os.path.exists(exe):
             return exe
+    for mac_exe in (
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    ):
+        if os.path.exists(mac_exe):
+            return mac_exe
+    for cmd in ("google-chrome", "chromium", "chromium-browser", "chrome", "msedge"):
+        found = shutil.which(cmd)
+        if found:
+            return found
     return None
 
 

@@ -18,7 +18,7 @@
 3. 支持 single（通栏单图）与 double（双图并排）两种画布尺寸，避免插入 Word 后字号变形。
 
 命令行用法：
-    D:\\anaconda3\\python.exe chart_maker.py --spec charts.json --out-dir 07_图表
+    python 脚本与规范/chart_maker.py --spec charts.json --out-dir 07_图表
 """
 
 import argparse

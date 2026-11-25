@@ -11,12 +11,12 @@
 4. **去公司硬编码**：保持通用的卖方专业护航立场，不将单个样本公司的特殊业务预设进全局模板。
 
 命令行用法：
-    D:\\anaconda3\\python.exe D:\\深度报告\\脚本与规范\\redteam_review.py `
-      --md D:\\深度报告\\超颖电子\\05_完整初稿.md `
-      --meta D:\\深度报告\\超颖电子\\report_meta.json `
-      --snapshot D:\\深度报告\\超颖电子\\00_原始资料\\01_最新财报全科目快照.md `
-      --manifest D:\\深度报告\\超颖电子\\06_证据清单.json `
-      --out D:\\深度报告\\超颖电子\\05_红队审稿任务包.md
+    python 脚本与规范/redteam_review.py `
+      --md 示例公司/05_完整初稿.md `
+      --meta 示例公司/report_meta.json `
+      --snapshot 示例公司/00_原始资料\\01_最新财报全科目快照.md `
+      --manifest 示例公司/06_证据清单.json `
+      --out 示例公司/05_红队审稿任务包.md
 """
 
 import argparse
@@ -122,10 +122,10 @@ def build_antigravity_opus_brief(
     sources_summary: str,
     pre_scan: str,
 ) -> str:
-    """生成给 Antigravity 内置 Claude Opus 5.5 的精简高效红队审稿任务包。"""
-    return f"""# Step 3.5 国金深度报告——Antigravity 原生 Claude Opus 5.5 独立审稿任务包
+    """生成给多客户端（Antigravity / Codex / ChatGPT Work）通用的精简高效红队审稿任务包。"""
+    return f"""# Step 3.5 深度报告——独立联网红队审稿任务包
 
-> **执行模型**：首选 Antigravity 内置 **Claude Opus 5.5**（`claude-opus-5-5-medium` / `high`），配额紧张时可切内置 `Claude Sonnet 5.5 (High)` / 零历史 `Gemini 4 (High)` 或外部 ChatGPT 复审回填（零历史独立上下文，禁用外部 Claude Code CLI）。
+> **执行模型（跨客户端兼容）**：有异构多 Agent 环境（如 Antigravity `swarm`）时首选内置 **Claude Opus 5.5**（可切 Sonnet 5.5 / Gemini 4）；在单对话框客户端（如 **ChatGPT Work / Codex**）中，必须以“独立红队审稿员”视角在本步骤逐项联网核查并落盘 `05_红队审稿意见.md`，**严禁以“没有指定模型/工具”为由跳过审稿**！
 > **待审稿件指纹（`draft_sha256`）**：`{draft_sha}`
 
 ## 你的身份、方式与边界

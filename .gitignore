@@ -1,7 +1,8 @@
-# Keep company projects, templates, and references local.
+# Keep company projects and generated outputs local, while tracking official templates, skills, and scripts.
 /*/
 !/.agents/
 !/脚本与规范/
+!/模板资产/
 
 __pycache__/
 *.py[cod]
@@ -20,3 +21,7 @@ credentials.json
 *.png
 *.jpg
 *.zip
+
+# Explicitly allow the two official Guojin templates inside 模板资产/
+!模板资产/*.docx
+!模板资产/*.xlsx

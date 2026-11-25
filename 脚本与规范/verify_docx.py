@@ -18,7 +18,7 @@
 12. 全文未完成占位符扫描（[待模型填入] 等：默认标黄供研究员自刷模型，--release 模式阻断）。
 
 命令行用法：
-    D:\\anaconda3\\python.exe verify_docx.py --docx "D:\\深度报告\\超颖电子\\超颖电子_深度报告.docx"
+    python 脚本与规范/verify_docx.py --docx "示例公司/超颖电子_深度报告.docx"
 """
 
 import argparse
@@ -249,49 +249,81 @@ def verify_docx(docx_path: str, release: bool = False, allow_consec_text: bool =
 
 def run_visual_pagination_check(docx_path: str) -> None:
     """
-    通过本机 Microsoft Word COM 静默导出临时 PDF，并用 PyMuPDF 检查真实渲染后的分页效果：
-    1. 检查总页数与异常空白页；
-    2. 检查第 1 页是否完整容纳封面与投资摘要（未被右栏财务表挤到第 2 页）；
-    3. 自动渲染首页（P.1）及疑似异常页 PNG 到 `<公司目录>/09_视觉抽检页/`，供研究员或视觉模型快速复核。
+    跨平台导出临时 PDF 并用 PyMuPDF 检查真实渲染后的分页效果：
+    - Windows 优先走 Microsoft Word COM；Linux/macOS（含 ChatGPT Work 云端容器）自动回退 LibreOffice（soffice）；
+    - 检查总页数、异常空白页、首页摘要是否溢出，并输出抽检页 PNG 到 `<公司目录>/09_视觉抽检页/`。
     """
     import os
+    import shutil
+    import subprocess
     import tempfile
 
     try:
         import fitz  # PyMuPDF
-        import win32com.client  # type: ignore
     except ImportError as e:
-        print(f"  🟡 [视觉分页检查跳过] 缺少依赖（{e}），请确保安装 pywin32 与 PyMuPDF")
+        print(f"  🟡 [视觉分页检查跳过] 缺少 PyMuPDF 依赖（{e}）")
         return
 
     abs_docx = os.path.abspath(docx_path)
     out_dir = os.path.join(os.path.dirname(abs_docx), "09_视觉抽检页")
     os.makedirs(out_dir, exist_ok=True)
 
-    word = None
-    doc_com = None
     with tempfile.TemporaryDirectory() as td:
         tmp_pdf = os.path.join(td, "preview.pdf")
-        try:
-            word = win32com.client.DispatchEx("Word.Application")
-            word.Visible = False
-            word.DisplayAlerts = 0
-            doc_com = word.Documents.Open(abs_docx, ReadOnly=True)
-            doc_com.SaveAs(tmp_pdf, FileFormat=17)  # 17 = wdFormatPDF
-        except Exception as e:
-            print(f"  🟡 [视觉分页检查失败] Word COM 导出 PDF 异常：{e}")
-            return
-        finally:
-            if doc_com is not None:
+        exported = False
+        engine = ""
+
+        # 路径 1：Windows 下优先用本机 Word COM（与最终打开排版 100% 一致）
+        if sys.platform.startswith("win"):
+            word = None
+            doc_com = None
+            try:
+                import win32com.client  # type: ignore
+
+                word = win32com.client.DispatchEx("Word.Application")
+                word.Visible = False
+                word.DisplayAlerts = 0
+                doc_com = word.Documents.Open(abs_docx, ReadOnly=True)
+                doc_com.SaveAs(tmp_pdf, FileFormat=17)  # 17 = wdFormatPDF
+                exported = os.path.exists(tmp_pdf)
+                engine = "Word COM"
+            except Exception:
+                exported = False
+            finally:
+                if doc_com is not None:
+                    try:
+                        doc_com.Close(False)
+                    except Exception:
+                        pass
+                if word is not None:
+                    try:
+                        word.Quit()
+                    except Exception:
+                        pass
+
+        # 路径 2：Linux / macOS 或无 Word 环境自动回退 LibreOffice
+        if not exported:
+            soffice = shutil.which("soffice") or shutil.which("libreoffice")
+            if soffice:
                 try:
-                    doc_com.Close(False)
-                except Exception:
-                    pass
-            if word is not None:
-                try:
-                    word.Quit()
-                except Exception:
-                    pass
+                    subprocess.run(
+                        [soffice, "--headless", "--convert-to", "pdf", "--outdir", td, abs_docx],
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=90,
+                    )
+                    base_pdf = os.path.join(td, os.path.splitext(os.path.basename(abs_docx))[0] + ".pdf")
+                    if os.path.exists(base_pdf):
+                        tmp_pdf = base_pdf
+                        exported = True
+                        engine = "LibreOffice"
+                except Exception as e:
+                    print(f"  🟡 [视觉分页检查跳过] LibreOffice 转 PDF 失败：{e}")
+                    return
+            else:
+                print("  🟡 [视觉分页检查跳过] 当前环境未安装 Word COM 或 LibreOffice，已跳过 PDF 分页抽检")
+                return
 
         pdf = fitz.open(tmp_pdf)
         total_pages = len(pdf)
@@ -318,7 +350,7 @@ def run_visual_pagination_check(docx_path: str) -> None:
 
         pdf.close()
         print(
-            f"13. 真实分页视觉检查（Word COM→PDF）：共 {total_pages} 页 | "
+            f"13. 真实分页视觉检查（{engine}→PDF）：共 {total_pages} 页 | "
             f"疑似空白页={blank_pages} | 首页摘要疑似溢出={'🔴 是' if cover_overflow else 'OK'}"
         )
         print(f"    已输出抽检页 PNG -> {out_dir}")

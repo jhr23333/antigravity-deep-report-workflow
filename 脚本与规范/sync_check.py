@@ -15,8 +15,8 @@
 5. **首页摘要字数护栏（≤ 850 字）与 `[待模型填入]` 占位符检查**（`--release` 模式零容忍阻断）。
 
 命令行用法：
-    D:\\anaconda3\\python.exe D:\\深度报告\\脚本与规范\\sync_check.py --dir D:\\深度报告\\超颖电子 --clean-orphans --strict
-    D:\\anaconda3\\python.exe D:\\深度报告\\脚本与规范\\sync_check.py --dir D:\\深度报告\\超颖电子 --release
+    python 脚本与规范/sync_check.py --dir 示例公司 --clean-orphans --strict
+    python 脚本与规范/sync_check.py --dir 示例公司 --release
 """
 
 import argparse
@@ -413,6 +413,52 @@ def audit_prose_numbers(
     return findings
 
 
+def audit_outline_shrinkage(
+    company_dir: str,
+    actual_visual_cnt: int,
+    md_text: str,
+) -> Tuple[List[str], List[str]]:
+    """
+    防单回合偷懒缩水门禁（专为云端/单对话框客户端设计）：
+    1. 若存在 03_段落级大纲.md，统计大纲拟定图表编号总数；若拟定 ≥ 6 张但成稿（图+表）低于拟定数的 75%，
+       直接亮 🔴 拦截（防止出现“大纲拟 17 张图、成稿偷懒只出 4 图 9 页”的严重缩水）；
+    2. 统计正文非表格纯文字总字数，若不足 4,500 字打印 🟡 篇幅偏薄提醒。
+    """
+    reds: List[str] = []
+    warns: List[str] = []
+    outline_path = os.path.join(company_dir, "03_段落级大纲.md")
+    if os.path.exists(outline_path):
+        with open(outline_path, "r", encoding="utf-8") as f:
+            outline_txt = f.read()
+        planned_ids = set(re.findall(r"图表\s*(\d+)", outline_txt))
+        planned_cnt = len(planned_ids)
+        if planned_cnt >= 6 and actual_visual_cnt < int(planned_cnt * 0.75):
+            reds.append(
+                f"🔴 [防缩水拦截·图表严重缺口] 大纲（03_段落级大纲.md）拟定 {planned_cnt} 张图表，"
+                f"但成稿仅落实 {actual_visual_cnt} 张（不足 75%），严禁偷懒缩水为简报！"
+            )
+
+    # 统计非注释、非表格、非标题的纯正文字数
+    prose_chars = 0
+    in_comment = False
+    for ln in md_text.splitlines():
+        s = ln.strip()
+        if "<!--" in s:
+            in_comment = True
+        if in_comment:
+            if "-->" in s:
+                in_comment = False
+            continue
+        if not s or s.startswith(("#", "|", ">", "![")):
+            continue
+        prose_chars += len(s)
+    if prose_chars < 4500:
+        warns.append(
+            f"🟡 [篇幅偏薄提醒] 全文纯正文字数仅 {prose_chars} 字（深度报告通常 ≥ 6,000 字），请核查是否遗漏分节落盘。"
+        )
+    return reds, warns
+
+
 def audit_qualitative_claims(
     md_text: str,
     manifest_data: Dict[str, Any],
@@ -699,6 +745,11 @@ def run_sync_check(
             f"🟡 [定性狠话未建底稿] 发现 {len(qual_findings)} 处高敏定性表述未在底稿清单命中（无出处请删改收敛，有出处请补 type='text' 底稿，详见 09_对账与质检报告.md）"
         )
 
+    # 5.6 防单回合偷懒缩水门禁（大纲拟定图表数 vs 成稿落地图表数 + 篇幅下限检查）
+    shrink_reds, shrink_warns = audit_outline_shrinkage(company_dir, len(md_imgs) + len(md_tables), md_text)
+    reds.extend(shrink_reds)
+    yellows.extend(shrink_warns)
+
     # 6. 首页摘要字数、模型占位符、红队审稿版本哈希核查
     if meta_text:
         meta = json.loads(meta_text)
@@ -746,7 +797,7 @@ def run_sync_check(
 def main() -> None:
     """命令行入口。"""
     parser = argparse.ArgumentParser(description="国金深度报告三端有序对账、审稿版本绑定与发布门禁脚本")
-    parser.add_argument("--dir", required=True, help="公司报告目录（如 D:\\深度报告\\超颖电子）")
+    parser.add_argument("--dir", required=True, help="公司报告目录（如 示例公司）")
     parser.add_argument("--clean-orphans", action="store_true", help="自动删除 07_图表/ 中未被正文引用的旧 PNG")
     parser.add_argument("--strict", action="store_true", help="草稿严格模式：存在任一 🔴 错位即返回退出码 1")
     parser.add_argument("--release", action="store_true", help="正式发布门禁：同时拦截未填模型占位与未绑定终稿版本的红队审稿")

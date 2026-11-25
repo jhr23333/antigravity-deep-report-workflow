@@ -17,7 +17,7 @@
 3. 内置质控部红线自动体检：检查主标题是否 >20 字、全文是否含禁用极端词或禁用排版格式。
 
 命令行用法：
-    D:\\anaconda3\\python.exe render_docx.py --md 05_完整初稿.md --meta report_meta.json --out 公司名_深度报告.docx
+    python 脚本与规范/render_docx.py --md 05_完整初稿.md --meta report_meta.json --out 公司名_深度报告.docx
 """
 
 import argparse

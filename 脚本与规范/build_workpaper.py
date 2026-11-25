@@ -24,9 +24,9 @@
    - 默认以宽上限 1400px、JPEG 质量 90 高清嵌入，确保红框、小字与页码清晰可辨。
 
 命令行用法：
-    D:\\anaconda3\\python.exe build_workpaper.py --manifest 06_证据清单.json --out 公司名_工作底稿.xlsx
-    D:\\anaconda3\\python.exe build_workpaper.py --manifest 06_证据清单.json --out 公司名_工作底稿.xlsx --strict
-    D:\\anaconda3\\python.exe build_workpaper.py --manifest 06_证据清单.json --audit-only
+    python 脚本与规范/build_workpaper.py --manifest 06_证据清单.json --out 公司名_工作底稿.xlsx
+    python 脚本与规范/build_workpaper.py --manifest 06_证据清单.json --out 公司名_工作底稿.xlsx --strict
+    python 脚本与规范/build_workpaper.py --manifest 06_证据清单.json --audit-only
 """
 
 import argparse
