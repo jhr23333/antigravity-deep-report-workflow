@@ -46,6 +46,23 @@ PROMOTIONAL_PHRASES = [
     "迅速转化为",
 ]
 
+# 去 AI 味套词清单（与 style_guide.md / render_docx.py 保持同步）
+AI_FLUFF_PHRASES = [
+    "托底",
+    "双击",
+    "压舱石",
+    "进攻矛",
+    "定海神针",
+    "攻守兼备",
+    "梯度接力",
+    "形成合力",
+    "提供坚实底座",
+    "打开向上弹性",
+    "深度赋能",
+    "理性看待",
+    "双轮驱动成型",
+]
+
 
 def compute_draft_sha256(md_text: str, meta_text: str) -> str:
     """计算当前初稿正文与封面摘要的联合 SHA-256 指纹（取前 16 位），用于审稿结论版本绑定。"""
@@ -75,6 +92,9 @@ def scan_local_risks(md_text: str, meta_text: str = "") -> str:
         for w in PROMOTIONAL_PHRASES:
             if w in s:
                 hits.append(f"- [宣传措辞] 正文第 {idx} 行命中「{w}」：{s[:100]}")
+        for aw in AI_FLUFF_PHRASES:
+            if aw in s:
+                hits.append(f"- [去AI味提醒] 正文第 {idx} 行命中模板化套词「{aw}」：{s[:100]}")
         if ("前三季度" in s or "累计" in s) and "环比" in s and "较上半年" not in s and "单季" not in s:
             hits.append(f"- [疑似累计/环比混用] 正文第 {idx} 行：{s[:110]}")
         if s and not s.startswith(("#", "|", ">")):
@@ -88,6 +108,16 @@ def scan_local_risks(md_text: str, meta_text: str = "") -> str:
         for w in PROMOTIONAL_PHRASES:
             if w in meta_text:
                 hits.append(f"- [宣传措辞] 封面摘要（report_meta.json）命中「{w}」")
+        for aw in AI_FLUFF_PHRASES:
+            if aw in meta_text:
+                hits.append(f"- [去AI味提醒] 封面摘要（report_meta.json）命中模板化套词「{aw}」")
+
+    # 质控部风险提示强制排查项提醒：前 3 月/后 6 月解禁与大股东高质押（≥50%）
+    full_all = md_text + "\n" + meta_text
+    if "解禁" not in full_all and "质押" not in full_all:
+        hits.append(
+            "- [质控风险必查提醒] 全文及摘要均未提及限售股解禁或大股东质押核查结果，请审稿时确认近3月/后6月无解禁计划且大股东质押比例<50%"
+        )
 
     if not hits:
         return "（本地预扫描：0 处宣传化措辞、累计/环比混写或财务费用率/数字堆砌告警）"

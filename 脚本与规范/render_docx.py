@@ -72,6 +72,46 @@ PROMOTIONAL_WORDS_WARN = [
     "顺价传导顺畅",
 ]
 
+# 去 AI 味套词告警清单（源自研究库与深度报告统一卖方语体规范）
+AI_FLUFF_WORDS_WARN = [
+    "托底",
+    "双击",
+    "压舱石",
+    "进攻矛",
+    "定海神针",
+    "攻守兼备",
+    "梯度接力",
+    "形成合力",
+    "提供坚实底座",
+    "打开向上弹性",
+    "深度赋能",
+    "理性看待",
+    "双轮驱动成型",
+]
+
+# 一级/二级标题禁用口语动词与虚指清单（须改为书面结论词）
+TITLE_COLLOQUIAL_WORDS = [
+    "推成",
+    "卡住",
+    "跑赢",
+    "拉开",
+    "撑起",
+    "排到",
+    "压了",
+    "接不住",
+    "打开",
+    "甩",
+    "掉档",
+    "的一段",
+    "这门生意",
+]
+
+# 禁止使用的纯名词短语标题清单（标题必须为论点式双分句）
+PLAIN_NOUN_TITLES = {"公司概况", "主营业务", "财务分析", "行业概况", "竞争格局", "核心竞争力"}
+
+# 匹配单星号斜体（排除 **加粗** 与数学乘号两侧空格情形）
+SINGLE_ITALIC_RE = re.compile(r"(?<!\*)\*(?!\s|\*)([^\*\n]+?)(?<!\s|\*)\*(?!\*)")
+
 # 国金官方模板中单图/双图容器表格的精确列宽与左缩进（单位：dxa，实测自北方华创/天通股份样本）
 ONE_FULL_TEXT_WIDTH_DXA = 8192      # 常规单图（OneFullText，与正文左边界对齐，约 14.45 cm）
 ONE_FULL_TEXT_INDENT_DXA = 2551     # 正文左侧留白缩进（匹配 ContentContentNoFirLinIndent 的 left=2552）
@@ -333,11 +373,12 @@ def parse_markdown(md_text: str) -> List[Dict[str, Any]]:
 def add_formatted_runs(paragraph, text: str) -> int:
     """
     向段落写入文本，支持 **加粗** 语法（其余一律使用正文默认黑色非斜体非下划线）。
-    返回该段落中包含的加粗片段数量，用于质控提示。
+    自动清除可能误入的 Markdown 下划线 <u> 与单星号 *斜体* 标记，返回加粗片段数量。
     """
     bold_count = 0
-    # 清除可能误入的 Markdown 斜体/下划线标记，严格遵守质控红线
-    clean_text = re.sub(r"</?u>", "", text)
+    # 清除下划线标签与单星号斜体标记（保留 **加粗**），严格遵守质控红线
+    clean_text = re.sub(r"</?u>", "", text, flags=re.I)
+    clean_text = SINGLE_ITALIC_RE.sub(r"\1", clean_text)
     parts = re.split(r"(\*\*.*?\*\*)", clean_text)
     for part in parts:
         if not part:
@@ -352,7 +393,7 @@ def add_formatted_runs(paragraph, text: str) -> int:
 
 
 def run_qc_checks(md_text: str, meta: Optional[Dict[str, Any]]) -> List[str]:
-    """执行国金质控部核心红线自动检查，返回告警列表。"""
+    """执行国金质控部与卖方文风核心红线自动检查，返回告警列表。"""
     warnings: List[str] = []
 
     if meta:
@@ -380,7 +421,63 @@ def run_qc_checks(md_text: str, meta: Optional[Dict[str, Any]]) -> List[str]:
     for pw in PROMOTIONAL_WORDS_WARN:
         if pw in full_blob:
             warnings.append(f"🟡 [偏宣传化措辞] 检测到「{pw}」，建议收敛为客观审慎的卖方研究表述。")
+    for aw in AI_FLUFF_WORDS_WARN:
+        if aw in full_blob:
+            warnings.append(f"🟡 [去AI味提醒] 检测到模板化套词「{aw}」，请替换为平实具体的卖方业务表述。")
 
+    # 逐行校验标题字数/句法/口语词、斜体标记与正文过度加粗
+    in_comment = False
+    italic_hit = False
+    for ln_no, raw_ln in enumerate(md_text.splitlines(), 1):
+        s = raw_ln.strip()
+        if s.startswith("<!--"):
+            in_comment = True
+        if in_comment:
+            if "-->" in s:
+                in_comment = False
+            continue
+        if not s:
+            continue
+
+        # 标题长度、纯名词与口语动词检查（跳过固定骨架章如盈利预测/风险提示）
+        if s.startswith("# ") and not s.startswith("## "):
+            h_txt = s[2:].strip()
+            pure_h = re.sub(r"^[一二三四五六七八九十]+、\s*", "", h_txt)
+            if len(h_txt) > 20:
+                warnings.append(f"🟡 [一级标题超长] 第 {ln_no} 行共 {len(h_txt)} 字（上限 20 字）：{h_txt}")
+            if pure_h in PLAIN_NOUN_TITLES:
+                warnings.append(f"🟡 [纯名词标题] 第 {ln_no} 行一级标题「{h_txt}」须改为论点式双分句。")
+            for cw in TITLE_COLLOQUIAL_WORDS:
+                if cw in h_txt:
+                    warnings.append(f"🟡 [标题口语词] 第 {ln_no} 行一级标题含口语词「{cw}」：{h_txt}")
+            if any(p in h_txt for p in ("——", "？", "?")):
+                warnings.append(f"🟡 [标题标点规范] 第 {ln_no} 行一级标题不建议使用破折号或问号：{h_txt}")
+        elif s.startswith("## ") and not s.startswith("### "):
+            h_txt = s[3:].strip()
+            pure_h = re.sub(r"^\d+\.\d+\s*", "", h_txt)
+            if len(h_txt) > 26:
+                warnings.append(f"🟡 [二级标题超长] 第 {ln_no} 行共 {len(h_txt)} 字（上限 26 字）：{h_txt}")
+            if pure_h in PLAIN_NOUN_TITLES:
+                warnings.append(f"🟡 [纯名词标题] 第 {ln_no} 行二级标题「{h_txt}」须改为论点式双分句。")
+            for cw in TITLE_COLLOQUIAL_WORDS:
+                if cw in h_txt:
+                    warnings.append(f"🟡 [标题口语词] 第 {ln_no} 行二级标题含口语词「{cw}」：{h_txt}")
+            if any(p in h_txt for p in ("——", "？", "?")):
+                warnings.append(f"🟡 [标题标点规范] 第 {ln_no} 行二级标题不建议使用破折号或问号：{h_txt}")
+        elif not s.startswith("|"):
+            # 正文段落检查：单星号斜体与过度加粗/段首加粗
+            if SINGLE_ITALIC_RE.search(s):
+                italic_hit = True
+            bold_spans = re.findall(r"\*\*([^\*\n]+?)\*\*", s)
+            if len(bold_spans) > 1:
+                warnings.append(f"🟡 [正文加粗过多] 第 {ln_no} 行单段出现 {len(bold_spans)} 处加粗（红线：每页最多 1 处）")
+            if any(len(b) > 65 for b in bold_spans):
+                warnings.append(f"🟡 [正文加粗超长] 第 {ln_no} 行存在超过 2 行的长段加粗，请收敛。")
+            if s.startswith("**"):
+                warnings.append(f"🟡 [正文段首加粗] 第 {ln_no} 行正文段首疑似加粗（段落首句非标题不应加粗，摘要除外）。")
+
+    if italic_hit:
+        warnings.append("🟡 [禁用斜体] 检测到 Markdown 单星号斜体语法，渲染时已自动清除。")
     if re.search(r"<u>|</u>", md_text, flags=re.I):
         warnings.append("🟡 [禁用下划线] 检测到下划线标签，脚本已自动清除。")
 
