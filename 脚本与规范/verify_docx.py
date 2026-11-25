@@ -18,7 +18,7 @@
 12. 全文未完成占位符扫描（[待模型填入] 等：默认标黄供研究员自刷模型，--release 模式阻断）。
 
 命令行用法：
-    python 脚本与规范/verify_docx.py --docx "示例公司/超颖电子_深度报告.docx"
+    python 脚本与规范/verify_docx.py --docx "示例公司/公司名_深度报告.docx"
 """
 
 import argparse
@@ -202,10 +202,10 @@ def verify_docx(docx_path: str, release: bool = False, allow_consec_text: bool =
     )
     print(f"7. 新增数据表格非楷体9pt或未居中数 (应为 0): {data_table_kaiti_bad} (共 {data_table_total} 张表)")
     print(f"8. 空泛来源禁用词命中 (应为 0): {len(vague_hits)} {vague_hits}")
-    print(f"9. 第1-3章连续纯文字段 (应为 0): {len(consec_paras)} {consec_paras}")
+    print(f"9. 核心业务与行业章节连续纯文字段 (应为 0): {len(consec_paras)} {consec_paras}")
     if para_lens:
         print(
-            f"10. 第1-3章正文共 {len(para_lens)} 段，字数范围: {min(para_lens)}–{max(para_lens)} 字，"
+            f"10. 核心业务与行业章节正文共 {len(para_lens)} 段，字数范围: {min(para_lens)}–{max(para_lens)} 字，"
             f"均值 {sum(para_lens) // len(para_lens)} 字"
         )
     sum_status = "OK（首页单页安全）" if sum_char_cnt <= 850 else ("🟡 偏长，请核对首页未跨页" if sum_char_cnt <= 920 else "🔴 超长，大概率撑出首页")
@@ -231,7 +231,7 @@ def verify_docx(docx_path: str, release: bool = False, allow_consec_text: bool =
         if allow_consec_text:
             print(f"  🟡 [连续纯文字豁免] 已启用 --allow-consec-text，放行 {len(consec_paras)} 处连续纯文字段")
         else:
-            failures.append(f"第1-3章连续纯文字段 {len(consec_paras)} 处")
+            failures.append(f"核心业务与行业章节连续纯文字段 {len(consec_paras)} 处")
     if sum_char_cnt > 900:
         failures.append(f"首页摘要超长（{sum_char_cnt} 字 > 900 字）")
     if release and len(placeholder_hits) > 0:
@@ -360,8 +360,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="国金深度报告 Word 成品 12 项 XML 与视觉分页体检脚本")
     parser.add_argument("--docx", required=True, help="待验收的 Word 路径")
     parser.add_argument("--release", action="store_true", help="正式发布模式：存在任一 [待模型填入] 占位符即以退出码 1 阻断")
-    parser.add_argument("--visual", action="store_true", help="附加 Word COM 转 PDF 真实分页与首页溢出抽检")
-    parser.add_argument("--allow-consec-text", action="store_true", help="特殊体例豁免：允许第1-3章存在少量连续纯文字段（仅标黄提示）")
+    parser.add_argument("--visual", action="store_true", help="附加跨平台（Word COM / LibreOffice）转 PDF 真实分页与首页溢出抽检")
+    parser.add_argument("--allow-consec-text", action="store_true", help="特殊体例豁免：允许核心业务与行业章节存在少量连续纯文字段（仅标黄提示）")
     args = parser.parse_args()
     rc = verify_docx(args.docx, release=args.release, allow_consec_text=args.allow_consec_text)
     if args.visual:

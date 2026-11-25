@@ -216,9 +216,9 @@ def audit_chart_ordered_values(
     header_norm = [_norm_key(c) for c in header]
     col0_norm = [_norm_key(r[0]) if r else "" for r in raw_data]
 
-    # 构建底稿按“列期间”和按“行分类”的数值映射
+    # 构建底稿按“列期间”（跳过第 0 列行标签列）和按“行分类”的数值映射
     by_col_key: Dict[str, Set[float]] = {}
-    for c_idx, hk in enumerate(header_norm):
+    for c_idx, hk in enumerate(header_norm[1:], 1):
         vals_set: Set[float] = set()
         for r in raw_data[1:]:
             if c_idx < len(r):
@@ -242,15 +242,20 @@ def audit_chart_ordered_values(
             target_v = round(float(val), 2)
             ck = _norm_key(cats[idx])
 
-            # 查找底稿中对应的期间列（精确匹配或子串匹配）
+            # 优先精确匹配（列→行），再回退子串匹配（列→行），避免表头短词误吞分类名
             matched_bucket: Optional[Set[float]] = None
-            for hk, bset in by_col_key.items():
-                if hk and (ck == hk or ck in hk or hk in ck):
-                    matched_bucket = bset
-                    break
+            if ck in by_col_key:
+                matched_bucket = by_col_key[ck]
+            elif ck in by_row_key:
+                matched_bucket = by_row_key[ck]
+            if matched_bucket is None:
+                for hk, bset in by_col_key.items():
+                    if hk and (ck in hk or hk in ck):
+                        matched_bucket = bset
+                        break
             if matched_bucket is None:
                 for rk, bset in by_row_key.items():
-                    if rk and (ck == rk or ck in rk or rk in ck):
+                    if rk and (ck in rk or rk in ck):
                         matched_bucket = bset
                         break
 
@@ -645,6 +650,10 @@ def run_sync_check(
     """执行六维三端有序对账与发布门禁检查，返回 (🔴阻断列表, 🟡提醒列表)。"""
     md_path = os.path.join(company_dir, "05_完整初稿.md")
     charts_path = os.path.join(company_dir, "charts.json")
+    if not os.path.exists(charts_path):
+        alt_charts = os.path.join(company_dir, "07_图表", "charts.json")
+        if os.path.exists(alt_charts):
+            charts_path = alt_charts
     manifest_path = os.path.join(company_dir, "06_证据清单.json")
     meta_path = os.path.join(company_dir, "report_meta.json")
     chart_dir = os.path.join(company_dir, "07_图表")
@@ -663,11 +672,12 @@ def run_sync_check(
         with open(meta_path, "r", encoding="utf-8") as f:
             meta_text = f.read()
 
-    # 1. 正文引用图片 vs charts.json vs 磁盘文件
+    # 1. 正文引用图片 vs charts.json vs 磁盘文件（兼容 list 或 {"charts": [...]} 两种格式）
     md_imgs, md_tables = parse_md_charts_and_tables(md_text)
     md_img_set = set(md_imgs)
+    charts_list = charts_data if isinstance(charts_data, list) else charts_data.get("charts", [])
     cfg_by_file: Dict[str, Dict[str, Any]] = {
-        os.path.basename(c["filename"]): c for c in charts_data.get("charts", [])
+        os.path.basename(c["filename"]): c for c in charts_list
     }
     cfg_img_set = set(cfg_by_file.keys())
 

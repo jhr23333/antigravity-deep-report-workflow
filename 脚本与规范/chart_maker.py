@@ -488,7 +488,7 @@ def render_single_chart(spec: Dict[str, Any], theme: Dict[str, Any], out_dir: st
     # ==================== 8. 股权穿透架构图 (org_chart) ====================
     elif chart_type == "org_chart":
         # 结构: spec["top_nodes"] = [{"name": "...", "pct": "86.10%"}, ...]
-        #       spec["center_node"] = "超颖电子电路股份有限公司（603175.SH）"
+        #       spec["center_node"] = "示例电子股份有限公司（600000.SH）"
         #       spec["bottom_nodes"] = [{"name": "...", "pct": "100% / 生产基地"}, ...]
         top_nodes = spec.get("top_nodes", [])
         center_node = spec.get("center_node", "上市公司")

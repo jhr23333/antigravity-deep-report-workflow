@@ -11,11 +11,11 @@
 4. **去公司硬编码**：保持通用的卖方专业护航立场，不将单个样本公司的特殊业务预设进全局模板。
 
 命令行用法：
-    python 脚本与规范/redteam_review.py `
-      --md 示例公司/05_完整初稿.md `
-      --meta 示例公司/report_meta.json `
-      --snapshot 示例公司/00_原始资料\\01_最新财报全科目快照.md `
-      --manifest 示例公司/06_证据清单.json `
+    python 脚本与规范/redteam_review.py \
+      --md 示例公司/05_完整初稿.md \
+      --meta 示例公司/report_meta.json \
+      --snapshot 示例公司/00_原始资料/01_最新财报全科目快照.md \
+      --manifest 示例公司/06_证据清单.json \
       --out 示例公司/05_红队审稿任务包.md
 """
 
@@ -106,10 +106,14 @@ def summarize_manifest_sources(manifest_path: str) -> str:
             sname = sec.get("sheet_name", "")
             for it in sec.get("items", []):
                 src = it.get("source_name", "")
-                if "iFinD" in src and not it.get("evidence_screenshots") and not it.get("evidence_screenshot"):
+                src_low = src.lower()
+                is_db = bool(it.get("is_database_exempt")) or any(
+                    k in src_low for k in ("ifind", "wind", "choice", "万得", "同花顺", "bloomberg")
+                )
+                if is_db and not it.get("evidence_screenshots") and not it.get("evidence_screenshot"):
                     continue
                 rows.append(f"- [{sname}] {it.get('label', '')[:42]} -> 来源：{src}")
-        return "\n".join(rows[:45]) if rows else "（全部为 iFinD 数据库来源）"
+        return "\n".join(rows[:45]) if rows else "（全部为合规数据库来源）"
     except Exception:
         return "（证据清单读取失败）"
 
@@ -206,7 +210,7 @@ def main() -> None:
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(brief)
-    print(f"[OK] 已生成 Antigravity Opus 5.5 精简审稿任务包：{args.out}（draft_sha256={draft_sha}）")
+    print(f"[OK] 已生成精简红队审稿任务包：{args.out}（draft_sha256={draft_sha}）")
     print(pre_scan)
 
 

@@ -765,7 +765,7 @@ def run_manifest_capture(
         "must_all": ["43.8%", "HDI"],                    # 自动找页必需词
         "must_contain": ["43.8%"],                       # 截图页硬校验数字
         "keywords": ["43.8%", "HDI"],                    # 红框高亮词（缺省复用 must_contain）
-        "banner": "超颖电子港股聆讯稿 P.140"
+        "banner": "示例公司2025年年报 P.140"
       }
     - 网页截图：
       {
