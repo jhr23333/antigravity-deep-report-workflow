@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-国金证券电子组深度报告——Step 3.5 红队审稿预扫描、稿件哈希绑定与任务包生成脚本 (redteam_review.py)
+国金证券公司深度研究报告——Step 3.5 红队审稿预扫描、稿件哈希绑定与任务包生成脚本 (redteam_review.py)
 
 核心升级（2026-11-23 全面加固）：
 1. **统一使用 Antigravity 原生内置 Claude Opus 5.5**（`claude-opus-5-5-medium` / `claude-opus-5-5-high`），严禁调用外部 Claude Code CLI；
@@ -124,6 +124,54 @@ def scan_local_risks(md_text: str, meta_text: str = "") -> str:
     return "\n".join(hits)
 
 
+def check_prospectus_concentration(manifest_path: str) -> str:
+    """
+    检查第二、三章（行业与竞争章节）是否过度单一依赖目标公司招股书（占比 > 50% 则发出预警），
+    引导红队审稿员按 脚本与规范/industry_sources.md 督促补充独立三方库、宏观/海关数据或竞品财报。
+    """
+    if not manifest_path or not os.path.exists(manifest_path):
+        return ""
+    import re as _re
+    prospectus_kw = ("招股书", "招股書", "招股章程", "上市申请资料", "上市申請資料", "聆讯后资料集", "聆訊後資料集")
+    independent_kw = (
+        "年报", "年報", "中期报告", "中期報告", "季报", "季報", "ifind", "wind", "choice",
+        "euromonitor", "欧睿", "歐睿", "nielsen", "尼尔森", "kantar", "凯度",
+        "world bank", "世界银行", "imf", "un ", "联合国", "海关", "海關", "统计局", "統計局",
+        "semi", "trendforce", "idc", "gartner", "omdia", "yole", "prismark", "counterpoint",
+        "百川", "卓创", "隆众", "usgs", "中汽协", "乘联会", "ggii", "bnef", "iea", "iqvia",
+        "10-k", "10-q", "20-f", "reuters", "bloomberg", "财联社", "证券时报", "第一财经",
+    )
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        total_cnt = 0
+        pros_only = 0
+        for sec in data.get("sections", []):
+            sname = str(sec.get("sheet_name", "")).strip()
+            if not (sname.startswith("2.") or sname.startswith("3.")):
+                continue
+            for it in sec.get("items", []):
+                if it.get("type") not in ("chart", "table"):
+                    continue
+                total_cnt += 1
+                src = str(it.get("source_name", ""))
+                if not any(k in src for k in prospectus_kw):
+                    continue
+                outside_paren = _re.sub(r"[（(][^）)]*[）)]", "", src).lower()
+                has_indep = bool(it.get("is_database_exempt")) or any(k in outside_paren for k in independent_kw)
+                if not has_indep:
+                    pros_only += 1
+        if total_cnt >= 4 and (pros_only / total_cnt) > 0.50:
+            return (
+                f"- [来源单一预警·过度依赖招股书] 第二、三章 {pros_only}/{total_cnt} 张（{pros_only / total_cnt * 100:.1f}%）"
+                f"图表/表格仅源自目标公司招股书（超 50% 红线），请对照 脚本与规范/industry_sources.md "
+                f"核查是否需补充行业三方库（如欧睿/SEMI/百川等）、宏观/海关数据或可比竞品财报"
+            )
+    except Exception:
+        return ""
+    return ""
+
+
 def summarize_manifest_sources(manifest_path: str) -> str:
     """将 06_证据清单.json 压缩为极简来源清单（<1.5 KB），供 Opus 一眼扫查非白名单与过时出处。"""
     if not manifest_path or not os.path.exists(manifest_path):
@@ -163,7 +211,7 @@ def build_antigravity_opus_brief(
 > **待审稿件指纹（`draft_sha256`）**：`{draft_sha}`
 
 ## 你的身份、方式与边界
-1. **身份定位（卖方专业护航）**：你是国金证券质控部资深审核员 + 资深卖方电子研究总监。尊重卖方深度报告**整体偏乐观、突出核心成长主线、不过度堆砌负面风险**的框架，但凡涉及影响盈利质量或合规过审的重大事实不得隐瞒，次要结构因素用客观简短语句点出即可。
+1. **身份定位（卖方专业护航）**：你是国金证券质控部资深审核员 + 资深卖方行业研究总监。尊重卖方深度报告**整体偏乐观、突出核心成长主线、不过度堆砌负面风险**的框架，但凡涉及影响盈利质量或合规过审的重大事实不得隐瞒，次要结构因素用客观简短语句点出即可。
 2. **高效审稿方式（直接扫正文 + 联网查证 + 异常时定点翻页）**：
    - **主路径**：直接通读待审正文与摘要（`{md_path}`、`{meta_path or "无"}`），对照下方【合并报表核心科目快照】与【非数据库来源清单】，**重点调用 `search_web` 独立联网核查**正文中的关键行业数据、最新季度披露、竞争格局、技术规格与推理合理性；
    - **PDF 使用边界**：不要从头到尾遍历大体积 PDF 原件；**仅当发现明显异常数值、口径矛盾或重大分歧时，允许定点查看对应 PDF 页码核实**。
@@ -180,8 +228,8 @@ def build_antigravity_opus_brief(
 ## 必查六大红队维度
 1. **数据时效性与近 90 天公告核查（联网查新）**：核查公司最近 90 天全部临时公告（近期生产经营公告、自建基地开工、H股筹划/回购、最新定增发行结果）及行业机构近 60 天最新预测（防引用数月前旧预测），同时核对**实控人及一致行动人持股比例是否以最新发行/权益变动公告为准**（勿轻信数据库衍生值）。
 2. **会计口径与常识勾稽**：累计 vs 单季毛利率、同期间同比 vs 跨期对比（如前三季度 vs 上年全年需明示）；单季利润总额转负但归母净利为正时须核查**所得税费用与少数股东损益**；核查**交易性金融资产（广义现金）**与反推**最新单季经营现金流**；核查公司原表是否存在常识勾稽异常（如在研项目累计投入远超预计总投资）以及**含税重大合同金额是否被误当成不含税收入或尚未确收余额**。
-3. **技术规格、协议标准与测算边界**：产品/工艺代际、物理规格（如基板尺寸）、通信/存储接口协议标准速率（如 ONFI 6.0 最高 4,800 MT/s）与测试机台自身速率必须区分；工艺流程表必须按物理先后顺序拆分（如堆叠前 KGD 裸片测试 vs 堆叠后 TSV 互连测试）。
-4. **合规白名单红线**：正文与来源中是否混入友商卖方自制测算（含以权威机构名义转引券商国产化率测算）、个人自媒体或空泛来源？首页摘要是否误列未覆盖可比公司名称？
+3. **技术/经营规格、协议标准与测算边界**：产品/工艺代际、核心物理或经营规格（如制程/基板尺寸/单店模型/产线口径）以及行业协议标准速率须与公司产品自身实测能力严格区分；多环节工艺或业务链条表须按先后顺序拆分（如堆叠前 KGD 裸片测试 vs 堆叠后 TSV 互连测试，或上游原料 vs 终端渠道）。
+4. **合规白名单与来源多元化红线**：正文与来源中是否混入友商卖方自制测算（含以权威机构名义转引券商国产化率测算）、个人自媒体或空泛来源？首页摘要是否误列未覆盖可比公司名称？对于近 24 个月内上市的次新股，第二、三章是否过度单一依赖目标公司招股书（占比超 50%）而缺少 `industry_sources.md` 对应的行业独立三方库、官方宏观/海关数据及可比竞品一手财报？
 5. **文风纪律与图表标题一致性**：正文严禁连续堆砌一连串逐年/逐季数字清单（让图表说话，正文讲逻辑趋势），严禁分析财务费用率；核对每张图表标题标注的起止年份是否与实际横轴一致。
 6. **措辞克制与推理合理性**：针对尚未批量交付的前瞻业务，是否存在过度确定或偏宣传化表述？从终端市场收入到设备需求的传导逻辑是否存在明显跳步？
 
@@ -192,6 +240,7 @@ def build_antigravity_opus_brief(
 draft_sha256: {draft_sha}
 reviewer_model: claude-opus-5-5 | claude-sonnet-5-5 | gemini-4 | chatgpt
 verdict: PASS | CONDITIONAL_PASS | REJECT
+reviewed_at: YYYY-MM-DD HH:MM
 -->
 ```
 正文中依次列出：
@@ -203,7 +252,7 @@ verdict: PASS | CONDITIONAL_PASS | REJECT
 
 def main() -> None:
     """命令行入口：预扫描 + 计算稿件指纹 + 导出 Opus 5.5 审稿任务包。"""
-    parser = argparse.ArgumentParser(description="Step 3.5 红队审稿预扫描与 Antigravity Opus 5.5 任务包生成器")
+    parser = argparse.ArgumentParser(description="Step 3.5 红队审稿预扫描与多客户端审稿任务包生成器")
     parser.add_argument("--md", required=True, help="待审 05_完整初稿.md 路径")
     parser.add_argument("--meta", default="", help="可选 report_meta.json 路径")
     parser.add_argument("--snapshot", default="", help="可选 01_最新财报全科目快照.md 路径")
@@ -227,6 +276,12 @@ def main() -> None:
             snapshot_text = f.read()[:3500]
 
     pre_scan = scan_local_risks(md_text, meta_text)
+    pros_warn = check_prospectus_concentration(args.manifest)
+    if pros_warn:
+        if pre_scan.startswith("（本地预扫描：0"):
+            pre_scan = pros_warn
+        else:
+            pre_scan = pros_warn + "\n" + pre_scan
     sources_summary = summarize_manifest_sources(args.manifest)
     brief = build_antigravity_opus_brief(
         os.path.abspath(args.md),

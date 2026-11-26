@@ -1,7 +1,7 @@
 # 卖方公司深度研究报告——跨平台半自动化工作台
 
 > **开箱即用**：兼容 **Windows / macOS / Linux（含 ChatGPT Work 云端沙盒）**，支持 **Antigravity、Codex、ChatGPT Work**。
-> 已内置官方 Word / Excel 模板、9 个自动化生产脚本（含免账号巨潮/SEC 公开数据抓取兜底）+ 1 套离线回归测试、4 个模块化 Skill、4 份单一真源规范与 1 份跨平台配色配置。
+> 已内置官方 Word / Excel 模板、9 个自动化生产脚本（含免账号巨潮/SEC 公开数据抓取兜底）+ 1 套离线回归测试、4 个模块化 Skill、5 份单一真源规范（含分行业权威第三方源路由与防照搬招股书红线）与 1 份跨平台配色配置。
 
 ---
 
@@ -30,8 +30,8 @@
 
 ## 二、全链路 6 步运行原理
 
-1. **Step 1 立项建档与全量取数**：新建 `<公司名>/` 目录，常规财务优先走你当前可用的金融终端（iFinD / Choice / Wind / SEC 20-F / 官方财报，底稿免截图）；**必须无过滤拉取近 90 天全部临时公告标题清单**防漏重大催化，股本与实控人权益以最新发行/权益变动公告 PDF 为唯一真源；A 股可按需跑 `pull_company_data.py` 抽取三大表快照（含广义现金/所得税/少数股东损益，不输出财务费用率）。如本机配了知识星球 MCP，可同步摸底市场逻辑（物理隔离禁入底稿）。
-2. **Step 2 段落级大纲 + 两阶段精准联网与一手 URL 锁定**：采用**两阶段强制联网检索**（先宽搜定框架 → 再对每个核心数字/协议规格/近 60 天行业更新单点深搜核验），产出精确到 `(a)/(b)/(c)` 的 **`03_段落级大纲.md`**（章节数灵活，每个二级节不少于 3–4 段），并在 `02_行业公开数据包.md` 落盘真实文章页 URL 或海外官方 IR PDF 链接 + `must_contain` 核验词（海外官网遇 WAF/403 时同步锁定国内白名单财经/电子媒体转引页），**停下来等你确认后冻结**。
+1. **Step 1 立项建档与全量取数**：新建 `<公司名>/` 目录，常规财务优先走你当前可用的金融终端（iFinD / Choice / Wind / Bloomberg / SEC 20-F / 官方财报，底稿免截图；无付费终端可跑 `fetch_public_data.py`）；**必须无过滤拉取近 90 天全部临时公告标题清单**防漏重大催化，股本与实控人权益以最新发行/权益变动公告 PDF 为唯一真源；A 股可按需跑 `pull_company_data.py` 抽取三大表快照（含广义现金/所得税/少数股东损益，不输出财务费用率）。如本机配了知识星球 MCP，可同步摸底市场逻辑（物理隔离禁入底稿）。
+2. **Step 2 段落级大纲 + 分行业三方源路由与两阶段深搜**：先读取 `脚本与规范/industry_sources.md` 锁定本行业必查权威三方库（消费查欧睿/尼尔森、半导体查 SEMI/TrendForce、建材化工查百川/卓创等）+ 官方宏观/海关库 + 竞品财报，严守**次新股行业与竞争章（第二、三章）仅源自目标公司招股书的图表占比 ≤ 50%** 红线；采用**两阶段强制联网检索**（先宽搜定框架 → 再对每个核心数字/协议规格/近 60 天行业更新单点深搜核验），产出精确到 `(a)/(b)/(c)` 的 **`03_段落级大纲.md`**（章节数灵活，每个二级节不少于 3–4 段），并在 `02_行业公开数据包.md` 落盘真实文章页 URL 或海外官方 IR PDF 链接 + `must_contain` 核验词（海外官网遇 WAF/403 时同步锁定国内白名单财经媒体转引页），**停下来等你确认后冻结**。
 3. **Step 3 逐节撰稿与统稿汇总**：有子 Agent 则并发，无子 Agent 则按二级节逐个落盘 `04_分节草稿/*.md`（每段 200–300 字、不超过 350 字、1 段配 1 图/表；严守**正文不连续堆砌数字、不分析财务费用率**双红线），合并生成 `05_完整初稿.md`、`charts.json`、`06_证据清单.json` 与 `report_meta.json`。
 4. **Step 3.5 独立联网红队审稿（不可跳过）**：跑 `redteam_review.py` 生成带 `draft_sha256` 指纹与本地预扫描线索的 `05_红队审稿任务包.md`，再由独立审稿员（Antigravity 首选内置 Opus 5.5，可切 Sonnet/Gemini；ChatGPT Work/Codex 执行独立联网红队自审）对照六大维度核查并落盘 `05_红队审稿意见.md`，定点修订后再渲染。
 5. **Step 4 初稿复核（保留 `[待模型填入]`）**：你审定修订后的正文逻辑与事实；盈利预测与估值保持 `[待模型填入]` 留待最终 Word 中自刷模型。
@@ -58,22 +58,23 @@
 ├─ 模板资产/                             # 官方只读模板（脚本自动按相对路径读取）
 │  ├─ 国金证券_公司深度研究模板.docx
 │  └─ 国金研报工作底稿模板.xlsx
-└─ 脚本与规范/                           # 4 份单一真源规范 + 1 份跨平台配色 + 9 个生产脚本 + 1 套回归测试
+└─ 脚本与规范/                           # 5 份单一真源规范 + 1 份跨平台配色 + 9 个生产脚本 + 1 套回归测试
    ├─ style_guide.md                    # 【SSOT】质控红线 + 12 条正文细则 + 永久双红线 + 卖方语体
    ├─ report_template_spec.md           # 【SSOT】Markdown -> Word XML 样式映射
    ├─ workpaper_spec.md                 # 【SSOT】工作底稿规范 + 四级梯队 + 门禁 2B + 六道门禁
    ├─ workflow_sop.md                   # 【SSOT】6 步协作流程 + 00–09 目录速查 + 共享锚点模板
+   ├─ industry_sources.md               # 【SSOT】7 大行业权威第三方数据源路由 + 防照搬招股书 ≤50% 红线
    ├─ chart_theme.json                  # 【SSOT】国金黑蓝灰无网格线配色（兼容 Win/Mac/Linux 中文字体）
    ├─ fetch_public_data.py              # Step 1（无 iFinD 兜底）：免账号拉巨潮近 90 天公告/PDF + SEC EDGAR + 可选 AkShare/yfinance
    ├─ pull_company_data.py              # Step 1（A股可选）：合并三大表精确快照（含广义现金，剔除财务费用率）
-   ├─ redteam_review.py                 # Step 3.5：文风/口径预扫描 + 导出带 draft_sha256 的审稿任务包
+   ├─ redteam_review.py                 # Step 3.5：文风/口径/招股书集中度预扫描 + 导出带 draft_sha256 的审稿任务包
    ├─ chart_maker.py                    # Step 5：9 种标准图表批量生成 + 饼图防重叠 + 像素重叠检测
-   ├─ sync_check.py                     # Step 5：防缩水 + 标题年份 + 有序对账 + 落盘 09_对账与质检报告.md
-   ├─ render_docx.py                    # Step 5：渲染进官方 Word 模板（含标题/斜体/加粗/AI 味体检）
-   ├─ verify_docx.py                    # Step 5：12 项 XML 体检 + 跨平台 PDF 真实分页抽检（--visual）
+   ├─ sync_check.py                     # Step 5：防缩水 + 标题年份 + 招股书集中度 + 有序对账 + 落盘 09_对账与质检报告.md
+   ├─ render_docx.py                    # Step 5：渲染进官方 Word 模板（含标题/斜体/加粗/AI 味体检，支持 --strict）
+   ├─ verify_docx.py                    # Step 5：12 项 XML 硬门禁 + 跨平台 PDF 真实分页抽检（--visual）
    ├─ auto_evidence_capture.py          # Step 5：一键 --manifest 批量 PDF 整句红框 + 网页 CDP 红框 + 留痕
-   ├─ build_workpaper.py                # Step 5：正式高清底稿打包 + 门禁 2B 与六道门禁（--strict / --release）
-   └─ test_workflow_regression.py       # 维护回归测试：一键端到端校验 10 组跨脚本契约与规范防回退
+   ├─ build_workpaper.py                # Step 5：正式高清底稿打包 + 宽表自动续表 + 门禁 2B 与六道门禁（--strict / --release）
+   └─ test_workflow_regression.py       # 维护回归测试：一键端到端校验全部核心脚本契约、边界回归与规范防回退
 ```
 
 ---
@@ -85,7 +86,7 @@
 # A 股（可加 --download-reports 示例公司/00_原始资料/pdfs 自动下最新年报与季报 PDF）：
 python 脚本与规范/fetch_public_data.py --code 600584.SH --out 示例公司/00_原始资料/00_公开公告与财务速览.md
 # 美股（直连 SEC EDGAR 官方申报清单与 XBRL 财报）：
-python 脚本与规范/fetch_public_data.py --code ATAT --market us --out 亚朵集团/00_原始资料/00_公开公告与财务速览.md
+python 脚本与规范/fetch_public_data.py --code ATAT --market us --out 示例公司/00_原始资料/00_公开公告与财务速览.md
 
 # Step 1（A股可选）：从最新季报/年报 PDF 精确提取合并三大表快照
 python 脚本与规范/pull_company_data.py \

@@ -105,7 +105,13 @@ def verify_docx(docx_path: str, release: bool = False, allow_consec_text: bool =
         for v in VAGUE_SOURCES:
             if v in full_txt:
                 vague_hits.append(v)
-        if any(k in full_txt for k in ("三张报表预测摘要", "投资评级说明", "特别声明", "每股收益", "市场中相关报告")):
+        # 仅跳过官方模板内置的附录/评级/声明/右侧摘要表，避免第四章新增估值表因含“每股收益”被误跳过
+        is_template_eps_box = (
+            "每股收益" in full_txt
+            and "主营业务收入" in full_txt
+            and ("市盈率" in full_txt or "主要财务指标" in full_txt)
+        )
+        if any(k in full_txt for k in ("三张报表预测摘要", "投资评级说明", "特别声明", "市场中相关报告")) or is_template_eps_box:
             continue
 
         if len(t.rows) == 3 and len(t.columns) in (1, 3):
@@ -140,10 +146,15 @@ def verify_docx(docx_path: str, release: bool = False, allow_consec_text: bool =
                     borders_ok += 1
                 continue
 
-        # 新增数据表格：同时校验楷体 9pt 与全部单元格水平居中
+        # 新增数据表格：同时校验楷体 9pt、水平居中以及单元格垂直居中（<w:vAlign w:val="center"/>）
         data_table_total += 1
         for r in t.rows:
             for c in r.cells:
+                if c.text.strip():
+                    tcPr = c._tc.find(qn("w:tcPr"))
+                    vAlign = tcPr.find(qn("w:vAlign")) if tcPr is not None else None
+                    if vAlign is None or vAlign.get(qn("w:val")) != "center":
+                        data_table_kaiti_bad += 1
                 for p in c.paragraphs:
                     if p.text.strip() and p.alignment != 1:  # WD_ALIGN_PARAGRAPH.CENTER == 1
                         data_table_kaiti_bad += 1
@@ -213,8 +224,19 @@ def verify_docx(docx_path: str, release: bool = False, allow_consec_text: bool =
     ph_status = "OK（已填完）" if len(placeholder_hits) == 0 else ("🔴 存在未填模型占位，--release 禁止发版" if release else "🟡 草稿态（待填入第四章模型数字）")
     print(f"12. 全文未完成占位符数量（[待模型填入]等）: {len(placeholder_hits)} 处 -> {ph_status}")
 
-    # 硬失败判定：任何结构/格式缺陷直接返回非零退出码；--release 模式下有未填占位符同样阻断
+    # 硬失败判定：全部 12 项核心结构/排版规则均进入阻断判定；--release 模式下有未填占位符同样阻断
     failures = []
+    if title_font != "思源黑体 CN Heavy" or title_size != 18.0 or title_bold is not True or title_color != "004A70":
+        failures.append(
+            f"首页主标题样式不符（font={title_font}, size={title_size}pt, bold={title_bold}, color=#{title_color}）"
+        )
+    if not sum_head_styles:
+        failures.append("首页摘要缺少原生 SummaryTitle 小标题样式")
+    bad_sum_body = [s for s in sum_body_styles if s not in ("SummaryContentNoFirLinIndent", "SummaryContent")]
+    if bad_sum_body:
+        failures.append(f"首页摘要正文偏离原生 SummaryContentNoFirLinIndent 样式：{bad_sum_body}")
+    if len(page_breaks) < 2:
+        failures.append(f"双硬换页符缺失（仅检测到 {len(page_breaks)} 处，应至少 2 处）")
     if len(dup_titles) > 0:
         failures.append(f"图表重复编号 {len(dup_titles)} 处")
     if bold_override_bad > 0:
@@ -247,11 +269,12 @@ def verify_docx(docx_path: str, release: bool = False, allow_consec_text: bool =
     return 0
 
 
-def run_visual_pagination_check(docx_path: str) -> None:
+def run_visual_pagination_check(docx_path: str) -> int:
     """
     跨平台导出临时 PDF 并用 PyMuPDF 检查真实渲染后的分页效果：
     - Windows 优先走 Microsoft Word COM；Linux/macOS（含 ChatGPT Work 云端容器）自动回退 LibreOffice（soffice）；
-    - 检查总页数、异常空白页、首页摘要是否溢出，并输出抽检页 PNG 到 `<公司目录>/09_视觉抽检页/`。
+    - 检查总页数、异常空白页、首页摘要是否溢出，并输出抽检页 PNG 到 `<公司目录>/09_视觉抽检页/`；
+    - 检测到首页溢出或孤立空白页时返回非零退出码 1（环境无转 PDF 引擎时跳过并返回 0）。
     """
     import os
     import shutil
@@ -262,7 +285,7 @@ def run_visual_pagination_check(docx_path: str) -> None:
         import fitz  # PyMuPDF
     except ImportError as e:
         print(f"  🟡 [视觉分页检查跳过] 缺少 PyMuPDF 依赖（{e}）")
-        return
+        return 0
 
     abs_docx = os.path.abspath(docx_path)
     out_dir = os.path.join(os.path.dirname(abs_docx), "09_视觉抽检页")
@@ -320,10 +343,10 @@ def run_visual_pagination_check(docx_path: str) -> None:
                         engine = "LibreOffice"
                 except Exception as e:
                     print(f"  🟡 [视觉分页检查跳过] LibreOffice 转 PDF 失败：{e}")
-                    return
+                    return 0
             else:
                 print("  🟡 [视觉分页检查跳过] 当前环境未安装 Word COM 或 LibreOffice，已跳过 PDF 分页抽检")
-                return
+                return 0
 
         pdf = fitz.open(tmp_pdf)
         total_pages = len(pdf)
@@ -354,6 +377,15 @@ def run_visual_pagination_check(docx_path: str) -> None:
             f"疑似空白页={blank_pages} | 首页摘要疑似溢出={'🔴 是' if cover_overflow else 'OK'}"
         )
         print(f"    已输出抽检页 PNG -> {out_dir}")
+        vis_failures = []
+        if cover_overflow:
+            vis_failures.append("首页摘要疑似溢出至第2页")
+        if blank_pages:
+            vis_failures.append(f"存在疑似孤立空白页 {blank_pages}")
+        if vis_failures:
+            print(f"🔴 [VISUAL BLOCKED] 真实分页视觉检查未通过：{vis_failures}")
+            return 1
+        return 0
 
 
 if __name__ == "__main__":
@@ -365,5 +397,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     rc = verify_docx(args.docx, release=args.release, allow_consec_text=args.allow_consec_text)
     if args.visual:
-        run_visual_pagination_check(args.docx)
+        vis_rc = run_visual_pagination_check(args.docx)
+        rc = max(rc, vis_rc)
     sys.exit(rc)

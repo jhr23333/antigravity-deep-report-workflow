@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-国金证券电子组深度报告——Step 1 财报全科目快照与行情提取脚本 (pull_company_data.py)
+国金证券公司深度研究报告——Step 1 财报全科目快照与行情提取脚本 (pull_company_data.py)
 
 定位说明（2026-11-23 优化）：
 - 常规财务指标优先走同花顺 iFinD（更快、底稿免截图）；
@@ -28,7 +28,8 @@ import fitz
 STATEMENT_ITEMS: Dict[str, List[Tuple[str, List[str], bool]]] = {
     # (科目显示名, 正则匹配列表, 是否为必抽核心科目)
     "合并利润表": [
-        ("营业总收入", [r"^(?:一、)?营业总收入$", r"^其中：营业收入$"], True),
+        # 兼容一般企业“一、营业总收入”与制造业/消费品常见“一、营业收入”两种标准表项写法
+        ("营业总收入", [r"^(?:一、)?营业总收入$", r"^(?:一、)?营业收入$", r"^其中：营业收入$"], True),
         ("营业成本", [r"^其中：营业成本$", r"^营业成本$"], True),
         ("销售费用", [r"^销售费用$"], True),
         ("管理费用", [r"^管理费用$"], True),
@@ -75,21 +76,55 @@ def _parse_cn_number(tok: str) -> Optional[float]:
         return None
 
 
+def _is_real_statement_page(txt: str, norm: str, stmt_name: str, mother_name: str) -> bool:
+    """
+    判定当前页是否为真实的合并财务报表正文页（过滤年报“目录”页、点线页码页与正文闲谈提及页）：
+    1. 命中合并报表名且同类型母公司报表名不位于页面顶部或先于合并报表出现；
+    2. 排除顶部含“目录”或含多处“...... 页码”点线引导符的目录页；
+    3. 页面须同时包含会计表头线索（编制单位/单位/期末余额/本期发生额/项目等）与至少 2 个有效报表金额。
+    """
+    pos_s = norm.find(stmt_name)
+    if pos_s < 0:
+        return False
+    pos_m = norm.find(mother_name)
+    if pos_m >= 0 and (pos_m < 80 or pos_m < pos_s):
+        return False
+    # 过滤年报目录页（常见于第 1–4 页，列出“合并资产负债表……98”）
+    if "目录" in norm[:120] or len(re.findall(r"[\.·…]{4,}\s*\d+", txt)) >= 2:
+        return False
+    has_table_cue = any(
+        cue in norm for cue in ("编制单位", "单位：", "单位:", "期末余额", "本期发生额", "上期发生额", "项目")
+    )
+    if not has_table_cue:
+        return False
+    # 至少存在 2 个有效金额（绝对值 >= 1000 或含小数点，避免把目录页码误当金额）
+    num_hits = 0
+    for tok in re.split(r"\s+", txt):
+        v = _parse_cn_number(tok)
+        if v is not None and (abs(v) >= 1000 or "." in tok):
+            num_hits += 1
+            if num_hits >= 2:
+                return True
+    return False
+
+
 def _detect_statement_sections(doc: fitz.Document) -> Dict[str, List[int]]:
     """
-    先定位三大合并报表的起止页区间（跳过首页“主要会计数据”和母公司单体报表），
+    先定位三大合并报表的起止页区间（跳过目录页、首页“主要会计数据”和母公司单体报表），
     确保每个科目只在对应合并报表区间内按列提取。
     """
+    stmt_pairs = [
+        ("合并资产负债表", "母公司资产负债表"),
+        ("合并利润表", "母公司利润表"),
+        ("合并现金流量表", "母公司现金流量表"),
+    ]
     starts: Dict[str, int] = {}
     for p_idx in range(len(doc)):
         txt = doc[p_idx].get_text()
         norm = "".join(txt.split())
-        if "合并资产负债表" in norm and "母公司资产负债表" not in norm[:60] and "合并资产负债表" not in starts:
-            starts["合并资产负债表"] = p_idx
-        if "合并利润表" in norm and "母公司利润表" not in norm[:60] and "合并利润表" not in starts:
-            starts["合并利润表"] = p_idx
-        if "合并现金流量表" in norm and "母公司现金流量表" not in norm[:60] and "合并现金流量表" not in starts:
-            starts["合并现金流量表"] = p_idx
+        for stmt_name, mother_name in stmt_pairs:
+            if stmt_name not in starts and _is_real_statement_page(txt, norm, stmt_name, mother_name):
+                starts[stmt_name] = p_idx
 
     ordered = sorted(starts.items(), key=lambda kv: kv[1])
     ranges: Dict[str, List[int]] = {}

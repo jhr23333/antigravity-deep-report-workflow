@@ -803,22 +803,43 @@ def run_manifest_capture(
                 continue
 
             item_label = item.get("label") or item.get("title") or "未命名条目"
+            # 预先索引已有 evidence_screenshots 的人工元信息，避免 --write-back 覆写时丢失 caption/covered_claims/highlight_box
+            existing_shot_meta: Dict[str, Dict] = {}
+            for old_se in (item.get("evidence_screenshots") or []):
+                if isinstance(old_se, dict) and old_se.get("path"):
+                    norm_p = str(old_se["path"]).replace("\\", "/").strip()
+                    existing_shot_meta[norm_p] = dict(old_se)
+                    existing_shot_meta[os.path.basename(norm_p)] = dict(old_se)
+
             resolved_entries = []
 
             for idx, sp in enumerate(specs, 1):
-                ctype = str(sp.get("type", "")).lower().strip()
-                out_file = sp.get("out_file") or f"{item.get('id', 'ev')}_{idx}.png"
-                out_png = out_file if os.path.isabs(out_file) else os.path.join(target_dir, out_file)
+                # 同时兼容标准字段（type/pdf_path/out_file）与旧文档别名（mode/pdf/out）
+                ctype = str(sp.get("type") or sp.get("mode") or "").lower().strip()
+                out_file = str(sp.get("out_file") or sp.get("out") or f"{item.get('id', 'ev')}_{idx}.png").strip()
+                if os.path.isabs(out_file):
+                    out_png = out_file
+                else:
+                    # 防止传了 "08_底稿证据/xxx.png" 导致重复拼接成 "08_底稿证据/08_底稿证据/xxx.png"
+                    norm_out = out_file.replace("\\", "/")
+                    target_base = os.path.basename(os.path.normpath(target_dir))
+                    if norm_out.startswith(target_base + "/"):
+                        out_png = os.path.join(target_dir, norm_out[len(target_base) + 1:])
+                    elif "/" in norm_out:
+                        out_png = os.path.join(manifest_dir, norm_out)
+                    else:
+                        out_png = os.path.join(target_dir, norm_out)
                 meta_path = f"{out_png}.meta.json"
+                banner_hint = str(sp.get("banner") or "").strip()
 
                 if (not overwrite) and os.path.exists(out_png) and os.path.exists(meta_path):
                     skip_cnt += 1
                     print(f"  [SKIP] {item_label[:26]} -> {os.path.basename(out_png)}（已存在含 .meta.json）")
-                    resolved_entries.append((out_png, sp.get("url", "")))
+                    resolved_entries.append((out_png, str(sp.get("url", "")).strip(), banner_hint))
                     continue
 
                 if ctype == "pdf":
-                    raw_pdf = sp.get("pdf_path", "")
+                    raw_pdf = str(sp.get("pdf_path") or sp.get("pdf") or "").strip()
                     pdf_path = raw_pdf if os.path.isabs(raw_pdf) else os.path.join(manifest_dir, raw_pdf)
                     must_contain = list(sp.get("must_contain") or sp.get("must_all") or [])
                     keywords = list(sp.get("keywords") or must_contain)
@@ -829,9 +850,16 @@ def run_manifest_capture(
                         page_num = hits[0] if hits else None
                     if not page_num:
                         fail_cnt += 1
-                        print(f"  [FAIL] {item_label[:26]} -> PDF 未找到同时命中 {sp.get('must_all') or must_contain} 的页面")
+                        msg = f"PDF 未找到同时命中 {sp.get('must_all') or must_contain} 的页面"
+                        print(f"  [FAIL] {item_label[:26]} -> {msg}")
+                        if write_back:
+                            attempts = item.setdefault("attempted_urls", [])
+                            rec = {"url": raw_pdf or "pdf", "reason": msg}
+                            if rec not in attempts:
+                                attempts.append(rec)
+                                modified = True
                         continue
-                    banner = sp.get("banner") or f"{os.path.basename(pdf_path)} P.{page_num}"
+                    banner = banner_hint or f"{os.path.basename(pdf_path)} P.{page_num}"
                     ok = capture_pdf_with_redbox(
                         pdf_path=pdf_path,
                         page_num=int(page_num),
@@ -844,15 +872,22 @@ def run_manifest_capture(
                     if ok:
                         ok_cnt += 1
                         print(f"  [OK-PDF] {item_label[:26]} -> {os.path.basename(out_png)} (P.{page_num})")
-                        resolved_entries.append((out_png, ""))
+                        resolved_entries.append((out_png, "", banner))
                     else:
                         fail_cnt += 1
-                        print(f"  [FAIL-PDF] {item_label[:26]} -> P.{page_num} 校验或红框失败")
+                        msg = f"P.{page_num} 校验或红框失败"
+                        print(f"  [FAIL-PDF] {item_label[:26]} -> {msg}")
+                        if write_back:
+                            attempts = item.setdefault("attempted_urls", [])
+                            rec = {"url": f"{raw_pdf}#P.{page_num}", "reason": msg}
+                            if rec not in attempts:
+                                attempts.append(rec)
+                                modified = True
 
                 elif ctype == "web":
                     url = sp.get("url", "").strip()
                     must_contain = list(sp.get("must_contain") or [])
-                    banner = sp.get("banner") or item_label[:40]
+                    banner = banner_hint or item_label[:40]
                     # 对偶发 CDP 断连/超时自动重试一次，降低网络抖动导致的误失败
                     ok, final_url, msg = False, url, ""
                     for attempt in range(2):
@@ -869,7 +904,7 @@ def run_manifest_capture(
                     if ok:
                         ok_cnt += 1
                         print(f"  [OK-WEB] {item_label[:26]} -> {os.path.basename(out_png)}")
-                        resolved_entries.append((out_png, final_url))
+                        resolved_entries.append((out_png, final_url, banner))
                     else:
                         fail_cnt += 1
                         print(f"  [FAIL-WEB] {item_label[:26]} -> {msg}")
@@ -885,16 +920,28 @@ def run_manifest_capture(
                     print(f"  [FAIL] {item_label[:26]} -> 未知 capture_spec.type='{ctype}'")
 
             if write_back and resolved_entries:
-                rel_paths = [os.path.relpath(p, manifest_dir).replace("\\", "/") for p, _ in resolved_entries]
+                rel_paths = [os.path.relpath(p, manifest_dir).replace("\\", "/") for p, _, _ in resolved_entries]
                 if len(rel_paths) == 1:
-                    item["evidence_screenshot"] = rel_paths[0]
-                    if resolved_entries[0][1]:
-                        item["source_url"] = resolved_entries[0][1]
+                    rp, final_u, b_txt = rel_paths[0], resolved_entries[0][1], resolved_entries[0][2]
+                    item["evidence_screenshot"] = rp
+                    # 清理旧的复数列表，避免 build_workpaper.py 优先读取旧 evidence_screenshots 覆盖新单图
+                    if "evidence_screenshots" in item and len(specs) == 1:
+                        del item["evidence_screenshots"]
+                    if final_u:
+                        item["source_url"] = final_u
                 else:
-                    item["evidence_screenshots"] = [
-                        {"path": rp, "url": u} if u else {"path": rp}
-                        for rp, (_, u) in zip(rel_paths, resolved_entries)
-                    ]
+                    merged_shots = []
+                    for rp, (_, final_u, b_txt) in zip(rel_paths, resolved_entries):
+                        # 保留原有 caption / covered_claims / highlight_box / visually_verified 等扩展属性
+                        old_meta = existing_shot_meta.get(rp) or existing_shot_meta.get(os.path.basename(rp)) or {}
+                        entry = dict(old_meta)
+                        entry["path"] = rp
+                        if final_u:
+                            entry["url"] = final_u
+                        if b_txt and not entry.get("caption"):
+                            entry["caption"] = b_txt
+                        merged_shots.append(entry)
+                    item["evidence_screenshots"] = merged_shots
                 modified = True
 
     if write_back and modified:

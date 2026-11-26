@@ -65,13 +65,29 @@ BLACKLIST_SOURCES = [
     "998pcb.com",
     "Morgan Stanley",
     "摩根士丹利",
+    "Goldman Sachs",
     "高盛",
+    "J.P. Morgan",
+    "JP Morgan",
+    "摩根大通",
+    "UBS",
+    "瑞银",
+    "Citigroup",
+    "Citi",
+    "花旗",
     "中信证券",
     "中金公司",
     "华泰证券",
     "招商证券",
     "广发证券",
     "中信建投",
+    "国泰君安",
+    "海通证券",
+    "申万宏源",
+    "兴业证券",
+    "东吴证券",
+    "天风证券",
+    "微信公众号",
     "公开资料整理",
     "公开行业资料",
     "公开行业研究资料",
@@ -194,15 +210,24 @@ def extract_shot_entries(item: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _is_bare_homepage_url(url: str) -> bool:
-    """判断一个 HTTP(S) 链接是否只是官网首页根域名（缺少具体文章/公告路径）。"""
-    u = (url or "").strip()
-    if not u.startswith(("http://", "https://")):
+    """
+    判断 HTTP(S) 链接字符串中是否包含仅为官网首页根域名（缺少具体文章/公告路径）的网址。
+    支持分号分隔的多条网址：逐条核查每一条 HTTP(S) 链接，防止“第一条精确、第二条裸根域名”绕过门禁 5。
+    """
+    raw = (url or "").strip()
+    if not raw:
         return False
-    # 若包含多条用分号隔开的 URL，只要第一条是精确路径即放行
-    first_u = u.split(";")[0].split()[0].strip()
-    parsed = urlparse(first_u)
-    path = (parsed.path or "").strip("/")
-    return len(path) == 0 and not parsed.query
+    # 兼容英文分号与中文分号分隔的多 URL 串
+    segments = [seg.strip() for seg in re.split(r"[;；]", raw) if seg.strip()]
+    for seg in segments:
+        first_tok = seg.split()[0].strip()
+        if not first_tok.startswith(("http://", "https://")):
+            continue
+        parsed = urlparse(first_tok)
+        path = (parsed.path or "").strip("/")
+        if len(path) == 0 and not parsed.query:
+            return True
+    return False
 
 
 def _detect_peer_company_count(raw_data: List[List[Any]], source_name: str) -> int:
@@ -258,7 +283,7 @@ def _split_distinct_sources(source_name: str) -> List[str]:
     # 去除括号内日期/说明，仅按顿号/分号/斜杠拆分（不按“及”拆分，避免误拆“工信部及发改委联合通知”）
     cleaned = re.sub(r"[（(][^）)]*[）)]", "", source_name)
     parts = re.split(r"[、;；/]", cleaned)
-    ignore_kws = ("国金证券", "研究所", "ifind", "wind", "万得", "同花顺", "choice")
+    ignore_kws = ("国金证券", "研究所", "ifind", "wind", "万得", "同花顺", "choice", "bloomberg")
     sources: List[str] = []
     for p in parts:
         tok = p.strip()
@@ -643,21 +668,50 @@ def build_workbook(
 
             raw_data = item.get("raw_data", [])
             if raw_data:
-                for r_i, row_vals in enumerate(raw_data):
-                    max_lines = 1
-                    for c_i, val in enumerate(row_vals[:7], 1):
-                        cell = ws.cell(left_end_row, c_i, val)
-                        cell.border = BORDER_THIN
-                        cell.alignment = Alignment(wrap_text=True, vertical="center")
-                        if r_i == 0:
-                            cell.font = FONT_BOLD
-                            cell.fill = FILL_TABLE_HEAD
-                        else:
-                            cell.font = FONT_NORMAL
-                        sval = str(val or "")
-                        max_lines = max(max_lines, (len(sval) // 11) + 1)
-                    ws.row_dimensions[left_end_row].height = max(18, min(72, max_lines * 15))
-                    left_end_row += 1
+                def _write_table_slice(rows_slice: List[List[Any]]) -> None:
+                    nonlocal left_end_row
+                    for r_i, row_vals in enumerate(rows_slice):
+                        max_lines = 1
+                        for c_i, val in enumerate(row_vals[:7], 1):
+                            cell = ws.cell(left_end_row, c_i, val)
+                            cell.border = BORDER_THIN
+                            cell.alignment = Alignment(wrap_text=True, vertical="center")
+                            if r_i == 0:
+                                cell.font = FONT_BOLD
+                                cell.fill = FILL_TABLE_HEAD
+                            else:
+                                cell.font = FONT_NORMAL
+                            sval = str(val or "")
+                            max_lines = max(max_lines, (len(sval) // 11) + 1)
+                        ws.row_dimensions[left_end_row].height = max(18, min(72, max_lines * 15))
+                        left_end_row += 1
+
+                # 主块：写入前 7 列（A–G，与右侧 I–P 截图区严格隔离）
+                _write_table_slice([list(r[:7]) for r in raw_data])
+
+                # 宽表保护：若原始表超过 7 列，不再静默截断，而是自动按“首列主键 + 每次 6 列”向下续表完整保留全部列
+                max_cols = max((len(r) for r in raw_data), default=0)
+                if max_cols > 7:
+                    for start_col in range(7, max_cols, 6):
+                        end_col = min(start_col + 6, max_cols)
+                        ws.merge_cells(start_row=left_end_row, start_column=1, end_row=left_end_row, end_column=7)
+                        cont_cell = ws.cell(
+                            left_end_row,
+                            1,
+                            f"续表（第 {start_col + 1}–{end_col} 列，重复首列便于横向核对）",
+                        )
+                        cont_cell.font = FONT_BOLD
+                        cont_cell.fill = FILL_SUBHEADER
+                        cont_cell.alignment = Alignment(vertical="center")
+                        ws.row_dimensions[left_end_row].height = 19
+                        left_end_row += 1
+
+                        cont_rows = []
+                        for r in raw_data:
+                            key_col = [r[0]] if r else [""]
+                            tail_cols = list(r[start_col:end_col]) if len(r) > start_col else []
+                            cont_rows.append(key_col + tail_cols)
+                        _write_table_slice(cont_rows)
 
             # -------- 右侧内容：单图或多图纵向堆叠全覆盖 --------
             shot_entries = extract_shot_entries(item)

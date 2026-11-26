@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-国金证券电子组深度报告 —— 标准图表批量生成脚本 (chart_maker.py)
+国金证券公司深度研究报告 —— 标准图表批量生成脚本 (chart_maker.py)
 
 核心功能：
 1. 读取同目录下的 chart_theme.json，严格遵循国金质控部要求：
@@ -105,8 +105,8 @@ def render_single_chart(spec: Dict[str, Any], theme: Dict[str, Any], out_dir: st
     - series      : 系列列表 [{"name": "营业收入", "values": [...], "axis": "left"/"right", "kind": "bar"/"line"}]
     - y_label     : 左 Y 轴单位/标题（如 "亿元"）
     - y2_label    : 右 Y 轴单位/标题（仅 bar_line_dual，如 "%"）
-    - y2_is_pct   : 布尔值，右轴是否格式化为百分比（默认 True）
-    - show_labels : 是否显示数据标签（默认 True）
+    - y2_is_pct   : 布尔值，右轴是否格式化为百分比（未显式传入时自动按 y2_label/y2_label_fmt 是否含 '%' 推断）
+    - show_labels : 是否显示数据标签（默认 True；显式传入 True 时强制显示，不受默认多系列上限隐藏限制）
     - label_fmt   : 数值标签格式（如 "{:.1f}"）
     - y2_label_fmt: 右轴标签格式（如 "{:.1f}%"）
     """
@@ -120,7 +120,9 @@ def render_single_chart(spec: Dict[str, Any], theme: Dict[str, Any], out_dir: st
     dpi = theme["layout"].get("dpi", 300)
     palette = theme["colors"]["series"]
     font_cfg = theme["font"]
-    show_labels = spec.get("show_labels", True)
+    # 区分调用方是否显式声明 show_labels，防止显式传 True 时被多系列默认上限静默吞掉
+    show_labels_explicit = "show_labels" in spec
+    show_labels = bool(spec.get("show_labels", True))
     label_fmt = spec.get("label_fmt", "")
 
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
@@ -176,29 +178,42 @@ def render_single_chart(spec: Dict[str, Any], theme: Dict[str, Any], out_dir: st
         n_series = len(series_list)
         total_w = 0.72
         single_w = total_w / max(n_series, 1)
+        all_bar_vals: List[float] = []
         for i, s in enumerate(series_list):
             offset = (i - (n_series - 1) / 2) * single_w
             color = palette[i % len(palette)]
+            vals = s["values"]
+            all_bar_vals.extend(float(v) for v in vals if v is not None and not np.isnan(v))
             bars = ax.bar(
                 x + offset,
-                s["values"],
+                vals,
                 width=single_w * 0.92,
                 color=color,
                 label=s.get("name", f"系列{i+1}"),
             )
-            if show_labels and n_series <= 3:
+            # 默认系列数 <= 3 显示标签；若用户显式传入 show_labels=True 则强制显示
+            if show_labels and (show_labels_explicit or n_series <= 3):
                 for bar in bars:
                     h = bar.get_height()
                     if h is not None and not np.isnan(h):
+                        # 负值柱子标签放在柱底外侧，防止文字叠压深蓝柱体
+                        va = "bottom" if h >= 0 else "top"
+                        y_off = 2 if h >= 0 else -4
                         ax.annotate(
                             format_value(h, label_fmt),
                             xy=(bar.get_x() + bar.get_width() / 2, h),
-                            xytext=(0, 2),
+                            xytext=(0, y_off),
                             textcoords="offset points",
                             ha="center",
-                            va="bottom",
+                            va=va,
                             fontsize=font_cfg["data_label_size"] - 0.5,
+                            color=font_cfg["text_color"],
                         )
+        # 若存在负值柱子，补画 0 基线并向下扩展底部留白，防止负值数字撞到底轴
+        if all_bar_vals and min(all_bar_vals) < 0:
+            ax.axhline(0, color=theme["colors"]["spine"], linewidth=0.8, zorder=1)
+            cur_bot, cur_top = ax.get_ylim()
+            ax.set_ylim(bottom=min(cur_bot, min(all_bar_vals) * 1.28), top=cur_top)
         ax.set_xticks(x)
         ax.set_xticklabels(categories)
         ax.legend(
@@ -263,7 +278,8 @@ def render_single_chart(spec: Dict[str, Any], theme: Dict[str, Any], out_dir: st
                 markersize=ms,
                 label=s.get("name", f"系列{i+1}"),
             )
-            if show_labels and len(series_list) <= 2:
+            # 默认折线数 <= 2 显示标签；若用户显式传入 show_labels=True 则强制显示
+            if show_labels and (show_labels_explicit or len(series_list) <= 2):
                 for xi, yv in enumerate(s["values"]):
                     if yv is not None and not np.isnan(yv):
                         ax.annotate(
@@ -302,36 +318,65 @@ def render_single_chart(spec: Dict[str, Any], theme: Dict[str, Any], out_dir: st
         sub_w = bar_w / n_bars if n_bars > 1 else bar_w
 
         handles, labels = [], []
+        left_bar_vals: List[float] = []
         for i, s in enumerate(bar_series):
             offset = (i - (n_bars - 1) / 2) * sub_w if n_bars > 1 else 0
             color = palette[i % len(palette)]
+            vals = s["values"]
+            left_bar_vals.extend(float(v) for v in vals if v is not None and not np.isnan(v))
             bars = ax.bar(
                 x + offset,
-                s["values"],
+                vals,
                 width=sub_w * 0.92,
                 color=color,
                 label=s.get("name", ""),
             )
             handles.append(bars)
             labels.append(s.get("name", ""))
-            if show_labels and n_bars == 1:
+            if show_labels and (show_labels_explicit or n_bars == 1):
                 for bar in bars:
                     h = bar.get_height()
                     if h is not None and not np.isnan(h):
+                        # 负值柱子标签放在柱底外侧，防止文字叠压深蓝柱体
+                        va = "bottom" if h >= 0 else "top"
+                        y_off = 3 if h >= 0 else -4
                         ax.annotate(
                             format_value(h, label_fmt),
                             xy=(bar.get_x() + bar.get_width() / 2, h),
-                            xytext=(0, 3),
+                            xytext=(0, y_off),
                             textcoords="offset points",
                             ha="center",
-                            va="bottom",
+                            va=va,
                             fontsize=font_cfg["data_label_size"],
+                            color=font_cfg["text_color"],
                         )
+        # 左轴存在负值柱子时补画 0 基线并向下扩展留白
+        if left_bar_vals and min(left_bar_vals) < 0:
+            ax.axhline(0, color=theme["colors"]["spine"], linewidth=0.8, zorder=1)
+            cur_bot, cur_top = ax.get_ylim()
+            ax.set_ylim(bottom=min(cur_bot, min(left_bar_vals) * 1.28), top=cur_top)
 
         lw = theme["layout"].get("line_width", 2.0)
         ms = theme["layout"].get("marker_size", 4.5)
         line_colors = [theme["colors"]["line_secondary"], theme["colors"]["line_tertiary"]]
-        y2_fmt = spec.get("y2_label_fmt", "{:.1f}%")
+
+        # 智能推断右轴是否为百分比：优先遵从显式 y2_is_pct；否则根据 y2_label / y2_label_fmt 是否含 '%' 判断，
+        # 避免右轴为“家/座/亿美元/倍”等非百分比单位时被误贴 '%' 符号
+        y2_label_str = str(spec.get("y2_label", "") or "")
+        y2_fmt_raw = spec.get("y2_label_fmt")
+        if "y2_is_pct" in spec:
+            y2_is_pct = bool(spec["y2_is_pct"])
+        elif y2_label_str or y2_fmt_raw is not None:
+            y2_is_pct = (
+                "%" in y2_label_str
+                or "％" in y2_label_str
+                or "%" in str(y2_fmt_raw or "")
+                or "％" in str(y2_fmt_raw or "")
+            )
+        else:
+            y2_is_pct = True
+        y2_fmt = y2_fmt_raw if y2_fmt_raw is not None else ("{:.1f}%" if y2_is_pct else "")
+
         for j, s in enumerate(line_series):
             lcolor = line_colors[j % len(line_colors)]
             (line_obj,) = ax2.plot(
@@ -345,7 +390,7 @@ def render_single_chart(spec: Dict[str, Any], theme: Dict[str, Any], out_dir: st
             )
             handles.append(line_obj)
             labels.append(s.get("name", ""))
-            if show_labels and len(line_series) == 1:
+            if show_labels and (show_labels_explicit or len(line_series) == 1):
                 for xi, yv in enumerate(s["values"]):
                     if yv is not None and not np.isnan(yv):
                         ax2.annotate(
@@ -364,7 +409,7 @@ def render_single_chart(spec: Dict[str, Any], theme: Dict[str, Any], out_dir: st
         ax.set_xticklabels(categories)
         if spec.get("y2_label"):
             ax2.set_ylabel(spec["y2_label"], fontsize=font_cfg["axis_label_size"])
-        if spec.get("y2_is_pct", True):
+        if y2_is_pct:
             ax2.yaxis.set_major_formatter(mtick.PercentFormatter(decimals=0))
 
         # 合并左右轴图例置于顶部居中

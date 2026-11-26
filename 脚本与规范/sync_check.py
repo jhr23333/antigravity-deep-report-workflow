@@ -40,7 +40,7 @@ def _norm_key(s: Any) -> str:
 
 
 def _extract_cell_nums(val: Any) -> List[float]:
-    """提取单元格中的所有数值（忽略纯年份 2015–2030 以防干扰业务数字对账）。"""
+    """提取单元格中的所有数值（保留 2 位小数；年份过滤由调用方按业务语义按需处理）。"""
     if isinstance(val, (int, float)):
         return [round(float(val), 2)]
     out: List[float] = []
@@ -94,8 +94,10 @@ def audit_chart_title_year_range(
     是否与 charts.json 对应图表的实际横轴年份范围严格一致；不一致直接亮 🔴 阻断。
     """
     errs: List[str] = []
-    # 匹配标题中的起止年份区间：支持 2023-2026E、2021–2026Q3、2022至2025年、FY2024-FY2026E
-    range_re = re.compile(r"(?:FY)?(20\d{2})(?:Q[1-4]|H[12]|E)?\s*(?:[-–—~]|至)\s*(?:FY)?(20\d{2})(?:Q[1-4]|H[12]|E)?")
+    # 匹配标题中的起止年份区间：支持 2023-2026E、2021–2026Q3、2022至2025年、2025年4月–2026年6月、FY2024-FY2026E
+    range_re = re.compile(
+        r"(?:FY)?(20\d{2})(?:年(?:\d{1,2}月)?|Q[1-4]|H[12]|E)?\s*(?:[-–—~]|至)\s*(?:FY)?(20\d{2})(?:年(?:\d{1,2}月)?|Q[1-4]|H[12]|E)?"
+    )
 
     for fn, title in chart_title_pairs:
         cfg = cfg_by_file.get(fn)
@@ -195,6 +197,21 @@ def parse_md_charts_and_tables(md_text: str) -> Tuple[List[str], List[Tuple[str,
     return img_refs, tables
 
 
+def _is_compatible_period_substring(k1: str, k2: str) -> bool:
+    """
+    子串回退期间兼容性保护：
+    禁止纯年度键（如 25 / 25年 / 25e）与带季度/半年度/月度限定的键（如 25h1 / 25q3 / 25年4月）互相子串匹配，
+    防止年度画图值误撞半年度/季度列导致漏报期间错配。
+    """
+    sub_period_re = re.compile(r"(?:q[1-4]|h[12]|[1-3]q|月|半|季)")
+    year_only_re = re.compile(r"^(?:fy)?\d{2}(?:年|e|f|a)?$")
+    k1_sub = bool(sub_period_re.search(k1))
+    k2_sub = bool(sub_period_re.search(k2))
+    if (k1_sub and year_only_re.match(k2)) or (k2_sub and year_only_re.match(k1)):
+        return False
+    return True
+
+
 def audit_chart_ordered_values(
     fn: str,
     cfg: Dict[str, Any],
@@ -250,12 +267,12 @@ def audit_chart_ordered_values(
                 matched_bucket = by_row_key[ck]
             if matched_bucket is None:
                 for hk, bset in by_col_key.items():
-                    if hk and (ck in hk or hk in ck):
+                    if hk and (ck in hk or hk in ck) and _is_compatible_period_substring(ck, hk):
                         matched_bucket = bset
                         break
             if matched_bucket is None:
                 for rk, bset in by_row_key.items():
-                    if rk and (ck in rk or rk in ck):
+                    if rk and (ck in rk or rk in ck) and _is_compatible_period_substring(ck, rk):
                         matched_bucket = bset
                         break
 
@@ -271,11 +288,93 @@ def audit_chart_ordered_values(
     return errs
 
 
+def _is_pure_metric_cell(cell_text: str) -> bool:
+    """
+    判断表格单元格是否为“纯数值指标格”（如 '1,200'、'45%'、'8家'、'120亿元'、'+15pct'），
+    以区分需要精确比对的整数业务指标与长句备注中的附带整数。
+    """
+    s = str(cell_text or "").strip()
+    if not s or not re.search(r"\d", s):
+        return False
+    # 剥离常见数值符号与金融/业务单位后，若不再残留中文或英文字母，视为纯数值格
+    stripped = re.sub(
+        r"(?:万亿美元|亿美元|百万美元|人民币|亿元|万元|万㎡|万平方米|平方米|亿片|万片|万件|万台|万吨|万套|"
+        r"个百分点|pct|bps|bp|usd|rmb|hkd|cny|%|％|倍|x|家|座|条|个|天|次|年|月|元|港元|美元|约|超|近|约合|以上|以下|左右|"
+        r"[\s,+\-–—~≈<>≤≥/()（）\[\]·])",
+        "",
+        s,
+        flags=re.I,
+    )
+    return bool(re.fullmatch(r"\d+(?:\.\d+)?", stripped))
+
+
+def _match_md_and_manifest_tables(
+    md_tables: List[Tuple[str, List[List[str]]]],
+    manifest_tables: List[Dict[str, Any]],
+) -> List[Tuple[int, Tuple[str, List[List[str]]], Dict[str, Any]]]:
+    """
+    按标题词重合度 + 表头/首列实体重合度为正文表格匹配最相近的底稿 table，
+    解决两处建表顺序微调时位置 zip 错配导致的误报或漏报（无特征重合时回退原顺序）。
+    """
+    n = len(md_tables)
+    if n <= 1:
+        return [(1, md_tables[0], manifest_tables[0])] if n == 1 else []
+
+    def _bigrams(text: str) -> Set[str]:
+        t = _norm_key(text)
+        if len(t) < 2:
+            return {t} if t else set()
+        return {t[i : i + 2] for i in range(len(t) - 1)}
+
+    def _row_keys(rows: List[List[Any]]) -> Set[str]:
+        keys: Set[str] = set()
+        if not rows:
+            return keys
+        for h in rows[0]:
+            nk = _norm_key(h)
+            if nk:
+                keys.add(nk)
+        for r in rows[1:]:
+            if r:
+                k0 = _norm_key(r[0])
+                if re.match(r"^\d+$", k0) and len(r) > 1:
+                    k0 = _norm_key(r[1])
+                if k0:
+                    keys.add(k0)
+        return keys
+
+    # 计算两两相似度并贪心匹配（相似度相同优先保持原始顺序）
+    scored_pairs: List[Tuple[float, int, int]] = []
+    for mi, (md_title, md_rows) in enumerate(md_tables):
+        md_bg = _bigrams(md_title)
+        md_keys = _row_keys(md_rows)
+        for ji, m_item in enumerate(manifest_tables):
+            m_title = f"{m_item.get('label', '')} {m_item.get('title', '')}"
+            m_bg = _bigrams(m_title)
+            m_keys = _row_keys(m_item.get("raw_data") or [])
+            t_score = len(md_bg & m_bg) / max(len(md_bg | m_bg), 1)
+            k_score = len(md_keys & m_keys) / max(len(md_keys | m_keys), 1)
+            pos_bonus = 0.05 if mi == ji else 0.0
+            scored_pairs.append((t_score * 0.45 + k_score * 0.55 + pos_bonus, mi, ji))
+
+    scored_pairs.sort(key=lambda x: (-x[0], x[1], x[2]))
+    used_m: Set[int] = set()
+    used_j: Set[int] = set()
+    matched: Dict[int, int] = {}
+    for score, mi, ji in scored_pairs:
+        if mi not in used_m and ji not in used_j:
+            matched[mi] = ji
+            used_m.add(mi)
+            used_j.add(ji)
+
+    return [(mi + 1, md_tables[mi], manifest_tables[matched[mi]]) for mi in range(n)]
+
+
 def audit_md_tables_vs_manifest(
     md_tables: List[Tuple[str, List[List[str]]]],
     manifest_tables: List[Dict[str, Any]],
 ) -> List[str]:
-    """逐表逐行核对正文 Markdown 表格中的关键数字是否与底稿 type='table' 的 raw_data 一致。"""
+    """逐表逐行核对正文 Markdown 表格中的关键数字（含小数与纯数值列整数）是否与底稿 type='table' 一致。"""
     errs: List[str] = []
     if len(md_tables) != len(manifest_tables):
         errs.append(
@@ -283,7 +382,7 @@ def audit_md_tables_vs_manifest(
         )
         return errs
 
-    for idx, ((md_title, md_rows), m_item) in enumerate(zip(md_tables, manifest_tables), 1):
+    for idx, (md_title, md_rows), m_item in _match_md_and_manifest_tables(md_tables, manifest_tables):
         m_rows = m_item.get("raw_data") or []
         if len(md_rows) < 2 or len(m_rows) < 2:
             continue
@@ -291,34 +390,29 @@ def audit_md_tables_vs_manifest(
         if "[待模型填入]" in json.dumps(md_rows, ensure_ascii=False):
             continue
 
-        # 按行首实体名（或行号）映射底稿各行数字
+        # 按行首实体名（或排名后第 2 列公司名）映射底稿各行数字
         m_row_nums_by_key: Dict[str, Set[float]] = {}
-        m_all_nums: Set[float] = set()
         for r in m_rows[1:]:
             r_nums: Set[float] = set()
             for cell in r:
                 r_nums.update(_extract_cell_nums(cell))
-            m_all_nums.update(r_nums)
             if r:
                 k0 = _norm_key(r[0])
-                # 若首列是排名数字（如 1..10），改用第 2 列公司名作主键
                 if re.match(r"^\d+$", k0) and len(r) > 1:
                     k0 = _norm_key(r[1])
                 m_row_nums_by_key[k0] = r_nums
 
-        # 核对正文表格每一行的显著数值（含小数或 >= 20 且非年份）是否一致落在底稿对应行
+        # 核对正文表格每一行的关键数值：
+        # 1) 纯数值指标格：拦截所有非年份数字冲突（包括核心整数如营收 120 vs 240、工厂数 8 vs 5）；
+        # 2) 长文本备注格：拦截所有小数指标冲突，避免备注句中的描述性小整数引发误报。
         for r_i, mr in enumerate(md_rows[1:], 1):
             if not mr:
                 continue
             k0 = _norm_key(mr[0])
+            start_col = 1
             if re.match(r"^\d+$", k0) and len(mr) > 1:
                 k0 = _norm_key(mr[1])
-            row_salient_nums = [
-                n for cell in mr for n in _extract_cell_nums(cell)
-                if (abs(n - round(n)) > 1e-4) or (n >= 20 and not (2015 <= n <= 2035))
-            ]
-            if not row_salient_nums:
-                continue
+                start_col = 2
 
             # 找到底稿中匹配的行
             target_set: Optional[Set[float]] = None
@@ -329,13 +423,24 @@ def audit_md_tables_vs_manifest(
             if target_set is None:
                 continue
 
-            diff = [n for n in row_salient_nums if n not in target_set]
-            # 允许底稿侧略去非核心说明数字，但若正文行关键财务金额（含小数）与底稿行存在直接冲突则拦截
-            decimal_diff = [n for n in diff if abs(n - round(n)) > 1e-4]
-            if decimal_diff:
+            strict_diffs: List[float] = []
+            for c_i, cell in enumerate(mr):
+                # 跳过首列主键/排名序号格
+                if c_i < start_col:
+                    continue
+                is_metric = _is_pure_metric_cell(cell)
+                for n in _extract_cell_nums(cell):
+                    is_year = (abs(n - round(n)) < 1e-4) and (2015 <= n <= 2035)
+                    if is_year:
+                        continue
+                    is_decimal = abs(n - round(n)) > 1e-4
+                    if (is_decimal or is_metric) and (n not in target_set):
+                        strict_diffs.append(n)
+
+            if strict_diffs:
                 errs.append(
                     f"🔴 [正文表格vs底稿数值错位] 表{idx}「{md_title[:24]}」第 {r_i} 行（{mr[0]}）："
-                    f"正文数值 {decimal_diff} 未出现在底稿对应行 {sorted(target_set)}！"
+                    f"正文数值 {strict_diffs} 未出现在底稿对应行 {sorted(target_set)}！"
                 )
     return errs
 
@@ -513,6 +618,62 @@ def audit_qualitative_claims(
                 "sentence": sent[:90].replace("|", "/"),
             })
     return findings
+
+
+def audit_prospectus_concentration(manifest_data: Dict[str, Any]) -> List[str]:
+    """
+    行业与竞争章节（第二、三章）防“照搬招股书”来源多元化自动检测：
+    - 扫描 06_证据清单.json 中 sheet_name 以 '2.' 或 '3.' 开头的 chart / table 条目；
+    - 判定某条目是否仅依赖目标公司自身招股书（含招股章程/上市申请资料，且未叠加独立外部机构/年报/中报/数据库/竞品财报）；
+    - 当第二、三章有效条目 ≥ 4 且招股书单一来源占比 > 50% 时，输出 🟡 告警，
+      提示按 脚本与规范/industry_sources.md 补充独立三方库、官方宏观/海关数据或可比竞品财报。
+    """
+    warns: List[str] = []
+    prospectus_kw = ("招股书", "招股書", "招股章程", "上市申请资料", "上市申請資料", "聆讯后资料集", "聆訊後資料集")
+    # 独立非招股书的外部/定期来源标识（若与招股书并列出现，说明已有跨文档印证，不计为纯招股书单一来源）
+    independent_kw = (
+        "年报", "年報", "中期报告", "中期報告", "季报", "季報", "ifind", "wind", "choice",
+        "euromonitor", "欧睿", "歐睿", "nielsen", "尼尔森", "kantar", "凯度",
+        "world bank", "世界银行", "imf", "un ", "联合国", "海关", "海關", "统计局", "統計局",
+        "semi", "trendforce", "idc", "gartner", "omdia", "yole", "prismark", "counterpoint",
+        "百川", "卓创", "隆众", "usgs", "中汽协", "乘联会", "ggii", "bnef", "iea", "iqvia",
+        "10-k", "10-q", "20-f", "reuters", "bloomberg", "财联社", "证券时报", "第一财经",
+    )
+
+    total_cnt = 0
+    prospectus_only_cnt = 0
+    for sec in manifest_data.get("sections", []):
+        sname = str(sec.get("sheet_name", "")).strip()
+        if not (sname.startswith("2.") or sname.startswith("3.")):
+            continue
+        for item in sec.get("items", []):
+            if item.get("type") not in ("chart", "table"):
+                continue
+            total_cnt += 1
+            src = str(item.get("source_name", ""))
+            src_low = src.lower()
+            has_pros = any(k in src for k in prospectus_kw)
+            if not has_pros:
+                continue
+            # 剔除“招股书（援引XXX）”括号内附带的招股书转引字样，只判断招股书之外是否还有独立来源文档
+            outside_paren = re.sub(r"[（(][^）)]*[）)]", "", src).lower()
+            # 检查是否存在除招股书外且未标数据库豁免的独立文档来源
+            has_indep = bool(item.get("is_database_exempt")) or any(
+                k in outside_paren for k in independent_kw
+            )
+            if not has_indep:
+                prospectus_only_cnt += 1
+
+    if total_cnt >= 4:
+        ratio = prospectus_only_cnt / total_cnt
+        if ratio > 0.50:
+            warns.append(
+                f"🟡 [来源单一预警·过度依赖招股书] 第二、三章共 {total_cnt} 张图表/表格中，"
+                f"{prospectus_only_cnt} 张（{ratio * 100:.1f}%，超 50% 红线）仅源自目标公司招股书；"
+                f"建议按 脚本与规范/industry_sources.md 补充独立三方数据库（如消费查欧睿、半导体查SEMI）、"
+                f"官方宏观/海关数据及可比竞品一手财报以提升增量深度。"
+            )
+    return warns
 
 
 def write_qc_report(
@@ -759,6 +920,9 @@ def run_sync_check(
     shrink_reds, shrink_warns = audit_outline_shrinkage(company_dir, len(md_imgs) + len(md_tables), md_text)
     reds.extend(shrink_reds)
     yellows.extend(shrink_warns)
+
+    # 5.7 行业与竞争章节防“照搬招股书”来源多元化检测（第二、三章招股书单一来源占比 ≤ 50%）
+    yellows.extend(audit_prospectus_concentration(manifest_data))
 
     # 6. 首页摘要字数、模型占位符、红队审稿版本哈希核查
     if meta_text:

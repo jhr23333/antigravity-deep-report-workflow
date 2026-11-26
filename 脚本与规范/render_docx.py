@@ -23,6 +23,7 @@
 import argparse
 import os
 import re
+import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 from docx import Document
@@ -326,6 +327,12 @@ def parse_markdown(md_text: str) -> List[Dict[str, Any]]:
             i += 1
             continue
 
+        # 3.5 三级标题 (### )：防止与后续正文粘连，单独拆块并由 QC 提示收敛为二级结构
+        if line.startswith("### "):
+            blocks.append({"type": "h3", "text": line.lstrip("#").strip()})
+            i += 1
+            continue
+
         # 4. Markdown 表格（以 | 开头）
         if line.startswith("|"):
             table_lines = []
@@ -350,7 +357,12 @@ def parse_markdown(md_text: str) -> List[Dict[str, Any]]:
             pending_table_meta = None
             continue
 
-        # 5. 普通正文段落（合并连续非空普通行）
+        # 5. 普通正文段落（合并连续非空普通行；列表项与三级标题各自独立成段防无空格粘连）
+        if line.startswith(("- ", "* ")):
+            blocks.append({"type": "paragraph", "text": line[2:].strip()})
+            i += 1
+            continue
+
         para_lines = [line]
         i += 1
         while i < n:
@@ -359,6 +371,8 @@ def parse_markdown(md_text: str) -> List[Dict[str, Any]]:
                 not nxt
                 or nxt.startswith("# ")
                 or nxt.startswith("## ")
+                or nxt.startswith("### ")
+                or nxt.startswith(("- ", "* "))
                 or nxt.startswith("<!--")
                 or nxt.startswith("|")
             ):
@@ -405,19 +419,22 @@ def run_qc_checks(md_text: str, meta: Optional[Dict[str, Any]]) -> List[str]:
         if meta.get("rating_type") == "首次覆盖" and not meta.get("target_price"):
             warnings.append("🔴 [缺少目标价] 首次覆盖公司研究报告必须提供目标价。")
 
-    for word in FORBIDDEN_EXTREME_WORDS:
-        if word in md_text:
-            warnings.append(f"🔴 [禁用极端词] 正文包含质控/文风禁词「{word}」，请替换为审慎表述。")
-
-    for vague in FORBIDDEN_VAGUE_SOURCES:
-        if vague in md_text:
-            warnings.append(f"🔴 [空泛来源标注] 检测到「{vague}」，请替换为具体一手机构或公开文档名称。")
-
     meta_blob = ""
     if meta:
+        meta_blob += str(meta.get("report_title", "")) + " "
         for sec in meta.get("summary_sections", []):
-            meta_blob += " ".join(sec.get("paragraphs", []))
+            meta_blob += " ".join(sec.get("paragraphs", [])) + " "
     full_blob = md_text + "\n" + meta_blob
+
+    # 极端禁词与空泛来源红线同时覆盖正文与首页摘要（report_meta.json），杜绝摘要漏检
+    for word in FORBIDDEN_EXTREME_WORDS:
+        if word in full_blob:
+            warnings.append(f"🔴 [禁用极端词] 正文或首页摘要包含质控/文风禁词「{word}」，请替换为审慎表述。")
+
+    for vague in FORBIDDEN_VAGUE_SOURCES:
+        if vague in full_blob:
+            warnings.append(f"🔴 [空泛来源标注] 检测到「{vague}」，请替换为具体一手机构或公开文档名称。")
+
     for pw in PROMOTIONAL_WORDS_WARN:
         if pw in full_blob:
             warnings.append(f"🟡 [偏宣传化措辞] 检测到「{pw}」，建议收敛为客观审慎的卖方研究表述。")
@@ -464,6 +481,8 @@ def run_qc_checks(md_text: str, meta: Optional[Dict[str, Any]]) -> List[str]:
                     warnings.append(f"🟡 [标题口语词] 第 {ln_no} 行二级标题含口语词「{cw}」：{h_txt}")
             if any(p in h_txt for p in ("——", "？", "?")):
                 warnings.append(f"🟡 [标题标点规范] 第 {ln_no} 行二级标题不建议使用破折号或问号：{h_txt}")
+        elif s.startswith("### "):
+            warnings.append(f"🟡 [三级标题提醒] 第 {ln_no} 行使用了三级标题「{s}」（国金官方模板仅含一/二级标题，建议合并进二级小节）。")
         elif not s.startswith("|"):
             # 正文段落检查：单星号斜体与过度加粗/段首加粗
             if SINGLE_ITALIC_RE.search(s):
@@ -584,8 +603,9 @@ def render_report(
     md_path: str,
     out_path: str,
     meta_path: Optional[str] = None,
-) -> None:
-    """主渲染函数：将 Markdown + 元数据渲染进国金官方 Word 模板。"""
+    strict: bool = False,
+) -> List[str]:
+    """主渲染函数：将 Markdown + 元数据渲染进国金官方 Word 模板；strict=True 时遇 🔴 红线阻断退出。"""
     with open(md_path, "r", encoding="utf-8") as f:
         md_text = f.read()
 
@@ -600,6 +620,11 @@ def render_report(
     qc_warnings = run_qc_checks(md_text, meta)
     for w in qc_warnings:
         print(w)
+
+    red_hits = [w for w in qc_warnings if w.startswith("🔴")]
+    if strict and red_hits:
+        print(f"🔴 [RENDER BLOCKED] --strict 模式下检测到 {len(red_hits)} 项质控硬红线，已中止渲染！")
+        sys.exit(1)
 
     # 2. 打开国金官方模板并定位文末附录锚点
     doc = Document(template_path)
@@ -634,6 +659,14 @@ def render_report(
         elif btype == "h2":
             p = doc.add_paragraph(style=get_style("ContentSecTitle"))
             p.add_run(blk["text"])
+            insert_element_before(anchor_el, p._element)
+
+        # ---------- 三级标题兜底（按独立加粗引导段渲染并保续下段，防与正文粘连） ----------
+        elif btype == "h3":
+            p = doc.add_paragraph(style=get_style("ContentContentNoFirLinIndent"))
+            p.paragraph_format.keep_with_next = True
+            r = p.add_run(blk["text"])
+            r.bold = True
             insert_element_before(anchor_el, p._element)
 
         # ---------- 正文段落 ----------
@@ -800,6 +833,7 @@ def render_report(
     doc.save(out_path)
     print(f"[OK] 已生成国金标准深度报告 Word：{out_path}（共渲染 {chart_counter} 张图表/表格）")
     print("[提示] 请在 Word 中打开后按 Ctrl+A -> F9 刷新目录页码，并用国金插件导入首页财务表与文末三表。")
+    return qc_warnings
 
 
 def main() -> None:
@@ -814,9 +848,10 @@ def main() -> None:
     parser.add_argument("--out", required=True, help="输出 Word (.docx) 路径")
     parser.add_argument("--meta", default=None, help="封面元数据 JSON 路径（可选）")
     parser.add_argument("--template", default=default_tpl, help="国金官方 Word 模板路径")
+    parser.add_argument("--strict", action="store_true", help="严格模式：正文或封面摘要命中任一 🔴 质控硬红线即中止并返回退出码 1")
     args = parser.parse_args()
 
-    render_report(args.template, args.md, args.out, args.meta)
+    render_report(args.template, args.md, args.out, args.meta, strict=args.strict)
 
 
 if __name__ == "__main__":

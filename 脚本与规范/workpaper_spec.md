@@ -68,10 +68,12 @@
           "source_name": "PSK公司2026年中期报告（转引Gartner 2026.03）",
           "source_url": "https://financialfilings.com/...",
           "capture_spec": {
-            "mode": "pdf",
-            "pdf": "00_原始资料/pdfs/psk_2026h1.pdf",
+            "type": "pdf",
+            "pdf_path": "00_原始资料/pdfs/psk_2026h1.pdf",
             "must_all": ["743", "Gartner"],
-            "out": "08_底稿证据/fig08_psk_gartner.png"
+            "must_contain": ["743", "Gartner"],
+            "out_file": "fig08_psk_gartner.png",
+            "banner": "PSK 2026H1 报告原页（含 Gartner 743 百万美元）"
           },
           "evidence_screenshots": [
             {"path": "08_底稿证据/fig08_psk_gartner.png", "caption": "PSK 2026H1 报告原页（含 Gartner 743 百万美元红框）"}
@@ -91,8 +93,8 @@
           "source_name": "公司2025年年报 P.28、海外龙头官网规格书",
           "source_url": "http://www.cninfo.com.cn/...",
           "capture_specs": [
-            {"mode": "pdf", "pdf": "00_原始资料/pdfs/2025年报.pdf", "must_all": ["Suprema"], "out": "08_底稿证据/tbl09_a.png"},
-            {"mode": "web", "url": "https://example-peer.com/spec/123", "must_contain": ["12英寸"], "out": "08_底稿证据/tbl09_b.png"}
+            {"type": "pdf", "pdf_path": "00_原始资料/pdfs/2025年报.pdf", "must_all": ["Suprema"], "out_file": "tbl09_a.png", "banner": "公司2025年年报 P.28"},
+            {"type": "web", "url": "https://example-peer.com/spec/123", "must_contain": ["12英寸"], "out_file": "tbl09_b.png", "banner": "海外龙头官网规格书"}
           ],
           "evidence_screenshots": [
             {"path": "08_底稿证据/tbl09_a.png", "caption": "公司2025年年报 P.28"},
